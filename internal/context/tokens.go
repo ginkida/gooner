@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
-	"gooner/internal/client"
-	"gooner/internal/config"
+	"gokin/internal/client"
+	"gokin/internal/config"
 
 	"google.golang.org/genai"
 )

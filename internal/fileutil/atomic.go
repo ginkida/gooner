@@ -13,7 +13,7 @@ func AtomicWrite(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 
 	// Create temporary file in the same directory (required for atomic rename)
-	tmp, err := os.CreateTemp(dir, ".gooner-*.tmp")
+	tmp, err := os.CreateTemp(dir, ".gokin-*.tmp")
 	if err != nil {
 		return err
 	}

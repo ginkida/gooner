@@ -54,7 +54,7 @@ func getConfigDir() (string, error) {
 		}
 		configDir = filepath.Join(home, ".config")
 	}
-	return filepath.Join(configDir, "gooner"), nil
+	return filepath.Join(configDir, "gokin"), nil
 }
 
 // RecordUsage records that a command was used.

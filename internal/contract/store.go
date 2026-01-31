@@ -19,10 +19,10 @@ type Store struct {
 }
 
 // NewStore creates a new contract store.
-// projectDir is the project's .gooner/contracts/ directory.
+// projectDir is the project's .gokin/contracts/ directory.
 // globalDir is the global config directory for lessons.
 func NewStore(workDir, configDir string) (*Store, error) {
-	projectDir := filepath.Join(workDir, ".gooner", "contracts")
+	projectDir := filepath.Join(workDir, ".gokin", "contracts")
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create contracts directory: %w", err)
 	}

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"gooner/internal/contract"
+	"gokin/internal/contract"
 )
 
 // ApprovalDecision represents the user's decision on a plan.

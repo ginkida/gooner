@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"gooner/internal/highlight"
+	"gokin/internal/highlight"
 )
 
 // RenderedBlock represents a rendered piece of content.

@@ -10,7 +10,7 @@ import (
 
 	"google.golang.org/genai"
 
-	"gooner/internal/security"
+	"gokin/internal/security"
 )
 
 // TreeTool displays directory structure as a tree.

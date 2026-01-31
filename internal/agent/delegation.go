@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"gooner/internal/logging"
+	"gokin/internal/logging"
 )
 
 // DelegationStrategy determines when and how an agent should delegate to sub-agents.

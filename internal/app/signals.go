@@ -8,8 +8,8 @@ import (
 	"syscall"
 	"time"
 
-	"gooner/internal/commands"
-	"gooner/internal/logging"
+	"gokin/internal/commands"
+	"gokin/internal/logging"
 )
 
 const (

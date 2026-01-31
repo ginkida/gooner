@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"gooner/internal/logging"
-	"gooner/internal/security"
+	"gokin/internal/logging"
+	"gokin/internal/security"
 
 	"google.golang.org/genai"
 )

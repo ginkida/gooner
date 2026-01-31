@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"gooner/internal/semantic"
+	"gokin/internal/semantic"
 
 	"google.golang.org/genai"
 )

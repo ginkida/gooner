@@ -35,7 +35,7 @@ func Load() (*Config, error) {
 func getConfigPath() string {
 	// Check XDG_CONFIG_HOME first
 	if xdgConfig := os.Getenv("XDG_CONFIG_HOME"); xdgConfig != "" {
-		return filepath.Join(xdgConfig, "gooner", "config.yaml")
+		return filepath.Join(xdgConfig, "gokin", "config.yaml")
 	}
 
 	homeDir, err := os.UserHomeDir()
@@ -43,14 +43,14 @@ func getConfigPath() string {
 		return ""
 	}
 
-	// For macOS, favor Library/Application Support/gooner if it exists or if we're on darwin
+	// For macOS, favor Library/Application Support/gokin if it exists or if we're on darwin
 	if runtime.GOOS == "darwin" {
-		appSupport := filepath.Join(homeDir, "Library", "Application Support", "gooner", "config.yaml")
+		appSupport := filepath.Join(homeDir, "Library", "Application Support", "gokin", "config.yaml")
 		if _, err := os.Stat(appSupport); err == nil {
 			return appSupport
 		}
 		// Fall back to .config if it already exists there
-		dotConfig := filepath.Join(homeDir, ".config", "gooner", "config.yaml")
+		dotConfig := filepath.Join(homeDir, ".config", "gokin", "config.yaml")
 		if _, err := os.Stat(dotConfig); err == nil {
 			return dotConfig
 		}
@@ -59,7 +59,7 @@ func getConfigPath() string {
 	}
 
 	// Default for other Unix-like systems
-	return filepath.Join(homeDir, ".config", "gooner", "config.yaml")
+	return filepath.Join(homeDir, ".config", "gokin", "config.yaml")
 }
 
 // loadFromFile loads configuration from a YAML file.
@@ -82,8 +82,8 @@ func loadFromFile(cfg *Config, path string) error {
 // loadFromEnv loads configuration from environment variables.
 func loadFromEnv(cfg *Config) {
 	// API key from environment (check multiple sources)
-	// Priority: GOONER_API_KEY > GLM_API_KEY > GEMINI_API_KEY
-	if apiKey := os.Getenv("GOONER_API_KEY"); apiKey != "" {
+	// Priority: GOKIN_API_KEY > GLM_API_KEY > GEMINI_API_KEY
+	if apiKey := os.Getenv("GOKIN_API_KEY"); apiKey != "" {
 		cfg.API.APIKey = apiKey
 	} else if apiKey := os.Getenv("GLM_API_KEY"); apiKey != "" {
 		cfg.API.APIKey = apiKey
@@ -94,11 +94,11 @@ func loadFromEnv(cfg *Config) {
 		cfg.API.APIKey = apiKey
 	}
 
-	if model := os.Getenv("GOONER_MODEL"); model != "" {
+	if model := os.Getenv("GOKIN_MODEL"); model != "" {
 		cfg.Model.Name = model
 	}
 
-	if backend := os.Getenv("GOONER_BACKEND"); backend != "" {
+	if backend := os.Getenv("GOKIN_BACKEND"); backend != "" {
 		cfg.API.Backend = backend
 	}
 }

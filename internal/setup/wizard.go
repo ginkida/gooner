@@ -23,12 +23,12 @@ const (
 	welcomeMessage = `
 %s╔═══════════════════════════════════════════════════════════════╗
 ║                                                               ║
-║                    %sWelcome to Gooner!%s                        ║
-║           AI coding assistant powered by Gemini API           ║
+║                    %sWelcome to Gokin!%s                        ║
+║         AI coding assistant powered by Gemini & GLM           ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝%s
 
-Gooner helps you work with code:
+Gokin helps you work with code:
   • Read, create, and edit files
   • Execute terminal commands
   • Search your project (glob, grep, tree)
@@ -147,7 +147,7 @@ func showNextSteps() {
 	fmt.Printf(`
 %s─── Next Steps ───%s
 
-  1. Run %sgooner%s in your project directory
+  1. Run %sgokin%s in your project directory
   2. Start chatting with the AI assistant
   3. Use %s/help%s to see available commands
 
@@ -181,5 +181,5 @@ func getConfigPath() (string, error) {
 		}
 		configDir = filepath.Join(home, ".config")
 	}
-	return filepath.Join(configDir, "gooner", "config.yaml"), nil
+	return filepath.Join(configDir, "gokin", "config.yaml"), nil
 }

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"gooner/internal/app"
-	"gooner/internal/config"
-	"gooner/internal/setup"
+	"gokin/internal/app"
+	"gokin/internal/config"
+	"gokin/internal/setup"
 
 	"github.com/spf13/cobra"
 )
@@ -21,16 +21,16 @@ var (
 
 func main() {
 	rootCmd := &cobra.Command{
-		Use:   "gooner",
+		Use:   "gokin",
 		Short: "AI-powered CLI assistant for code",
-		Long: `Gooner is a CLI tool that uses Google Gemini API to help you work with code.
+		Long: `Gokin is a CLI tool that uses Gemini API and GLM API to help you work with code.
 It provides an interactive chat interface with tools for reading, writing,
 and editing files, running commands, and more.`,
 		RunE: runApp,
 	}
 
 	// Global flags
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.config/gooner/config.yaml)")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.config/gokin/config.yaml)")
 	rootCmd.PersistentFlags().StringVar(&model, "model", "", "model to use (default is gemini-3-flash-preview)")
 	rootCmd.PersistentFlags().BoolVar(&runSetup, "setup", false, "run the setup wizard")
 
@@ -39,7 +39,7 @@ and editing files, running commands, and more.`,
 		Use:   "version",
 		Short: "Print the version number",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("gooner version %s\n", version)
+			fmt.Printf("gokin version %s\n", version)
 		},
 	})
 
@@ -101,6 +101,6 @@ func runApp(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create application: %w", err)
 	}
 
-	fmt.Println("\nStarting Gooner...")
+	fmt.Println("\nStarting Gokin...")
 	return application.Run()
 }

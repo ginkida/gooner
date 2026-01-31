@@ -11,9 +11,9 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 	"google.golang.org/genai"
 
-	"gooner/internal/cache"
-	"gooner/internal/git"
-	"gooner/internal/security"
+	"gokin/internal/cache"
+	"gokin/internal/git"
+	"gokin/internal/security"
 )
 
 // GlobTool finds files matching a glob pattern.

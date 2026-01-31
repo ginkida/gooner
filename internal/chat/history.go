@@ -126,7 +126,7 @@ func (m *HistoryManager) Delete(sessionID string) error {
 func getDataDir() (string, error) {
 	// Check XDG_DATA_HOME first
 	if xdgData := os.Getenv("XDG_DATA_HOME"); xdgData != "" {
-		return filepath.Join(xdgData, "gooner", "history"), nil
+		return filepath.Join(xdgData, "gokin", "history"), nil
 	}
 
 	// Fall back to ~/.local/share
@@ -135,14 +135,14 @@ func getDataDir() (string, error) {
 		return "", err
 	}
 
-	return filepath.Join(homeDir, ".local", "share", "gooner", "history"), nil
+	return filepath.Join(homeDir, ".local", "share", "gokin", "history"), nil
 }
 
 // getSessionsDir returns the data directory for full session storage.
 func getSessionsDir() (string, error) {
 	// Check XDG_DATA_HOME first
 	if xdgData := os.Getenv("XDG_DATA_HOME"); xdgData != "" {
-		return filepath.Join(xdgData, "gooner", "sessions"), nil
+		return filepath.Join(xdgData, "gokin", "sessions"), nil
 	}
 
 	// Fall back to ~/.local/share
@@ -151,7 +151,7 @@ func getSessionsDir() (string, error) {
 		return "", err
 	}
 
-	return filepath.Join(homeDir, ".local", "share", "gooner", "sessions"), nil
+	return filepath.Join(homeDir, ".local", "share", "gokin", "sessions"), nil
 }
 
 // SaveFull saves a complete session state including all content.

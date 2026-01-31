@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"gooner/internal/logging"
+	"gokin/internal/logging"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"

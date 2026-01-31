@@ -6,7 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"gooner/internal/ui"
+	"gokin/internal/ui"
 )
 
 // sendTimeout is the maximum time to wait for a UI send operation

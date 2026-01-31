@@ -8,8 +8,8 @@ import (
 
 	"google.golang.org/genai"
 
-	"gooner/internal/security"
-	"gooner/internal/undo"
+	"gokin/internal/security"
+	"gokin/internal/undo"
 )
 
 // EditTool performs search/replace operations in files.

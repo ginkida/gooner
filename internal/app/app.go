@@ -9,33 +9,33 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"gooner/internal/agent"
-	"gooner/internal/audit"
-	"gooner/internal/cache"
-	"gooner/internal/chat"
-	"gooner/internal/client"
-	"gooner/internal/commands"
-	"gooner/internal/config"
-	appcontext "gooner/internal/context"
-	"gooner/internal/contract"
-	"gooner/internal/hooks"
-	"gooner/internal/logging"
-	"gooner/internal/permission"
-	"gooner/internal/plan"
-	"gooner/internal/ratelimit"
-	"gooner/internal/router"
-	"gooner/internal/semantic"
-	"gooner/internal/tasks"
-	"gooner/internal/tools"
-	"gooner/internal/ui"
-	"gooner/internal/undo"
-	"gooner/internal/watcher"
+	"gokin/internal/agent"
+	"gokin/internal/audit"
+	"gokin/internal/cache"
+	"gokin/internal/chat"
+	"gokin/internal/client"
+	"gokin/internal/commands"
+	"gokin/internal/config"
+	appcontext "gokin/internal/context"
+	"gokin/internal/contract"
+	"gokin/internal/hooks"
+	"gokin/internal/logging"
+	"gokin/internal/permission"
+	"gokin/internal/plan"
+	"gokin/internal/ratelimit"
+	"gokin/internal/router"
+	"gokin/internal/semantic"
+	"gokin/internal/tasks"
+	"gokin/internal/tools"
+	"gokin/internal/ui"
+	"gokin/internal/undo"
+	"gokin/internal/watcher"
 
 	"google.golang.org/genai"
 )
 
 // SystemPrompt is the default system prompt for the assistant.
-const SystemPrompt = `You are Gooner, an AI assistant for software development. You help users work with code by:
+const SystemPrompt = `You are Gokin, an AI assistant for software development. You help users work with code by:
 - Reading and understanding code files
 - Writing and editing code
 - Running shell commands

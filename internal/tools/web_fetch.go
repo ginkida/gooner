@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"gooner/internal/security"
+	"gokin/internal/security"
 
 	"golang.org/x/net/html"
 	"google.golang.org/genai"
@@ -105,7 +105,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) (ToolRe
 	}
 
 	// Set user agent
-	req.Header.Set("User-Agent", "Gooner/1.0 (AI Assistant)")
+	req.Header.Set("User-Agent", "Gokin/1.0 (AI Assistant)")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 
 	// Fetch

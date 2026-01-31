@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"gooner/internal/tools"
+	"gokin/internal/tools"
 )
 
 // ResultCompactor compacts tool results to reduce token usage.

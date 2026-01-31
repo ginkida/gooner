@@ -5,10 +5,10 @@ import (
 	"sync"
 	"time"
 
-	"gooner/internal/chat"
-	"gooner/internal/client"
-	"gooner/internal/config"
-	"gooner/internal/logging"
+	"gokin/internal/chat"
+	"gokin/internal/client"
+	"gokin/internal/config"
+	"gokin/internal/logging"
 
 	"google.golang.org/genai"
 )

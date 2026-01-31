@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	appcontext "gooner/internal/context"
+	appcontext "gokin/internal/context"
 )
 
 // InstructionsCommand displays the loaded project instructions.
@@ -18,7 +18,7 @@ func (c *InstructionsCommand) Name() string {
 
 // Description returns the command description.
 func (c *InstructionsCommand) Description() string {
-	return "Show loaded project instructions (GOONER.md)"
+	return "Show loaded project instructions (GOKIN.md)"
 }
 
 // Usage returns the command usage.
@@ -59,10 +59,10 @@ func (c *InstructionsCommand) Execute(ctx context.Context, args []string, app Ap
 	if !projectMemory.HasInstructions() {
 		output.WriteString("# No Project Instructions Found\n\n")
 		output.WriteString("Searched for:\n")
-		output.WriteString("  - GOONER.md\n")
-		output.WriteString("  - .gooner/instructions.md\n")
-		output.WriteString("  - .gooner/INSTRUCTIONS.md\n")
-		output.WriteString("  - .gooner.md\n\n")
+		output.WriteString("  - GOKIN.md\n")
+		output.WriteString("  - .gokin/instructions.md\n")
+		output.WriteString("  - .gokin/INSTRUCTIONS.md\n")
+		output.WriteString("  - .gokin.md\n\n")
 		output.WriteString("Create one of these files to provide project-specific context.")
 		return output.String(), nil
 	}

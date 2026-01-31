@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"gooner/internal/logging"
+	"gokin/internal/logging"
 )
 
 // Message represents a message exchanged between agents.

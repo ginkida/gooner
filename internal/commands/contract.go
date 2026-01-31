@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"gooner/internal/contract"
-	"gooner/internal/plan"
+	"gokin/internal/contract"
+	"gokin/internal/plan"
 )
 
 // ContractCommand handles /contract subcommands.

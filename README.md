@@ -1,19 +1,19 @@
-# Gooner
+# Gokin
 
 AI-powered coding assistant for software development. A cost-effective alternative when Claude Code limits run out.
 
-## Why Gooner?
+## Why Gokin?
 
-I created Gooner as a companion to [Claude Code](https://github.com/anthropics/claude-code). When my Claude Code limits ran out, I needed a tool that could:
+I created Gokin as a companion to [Claude Code](https://github.com/anthropics/claude-code). When my Claude Code limits ran out, I needed a tool that could:
 
-- **Write projects from scratch** — Gooner handles the heavy lifting of initial development
+- **Write projects from scratch** — Gokin handles the heavy lifting of initial development
 - **Save money** — GLM-4 costs ~$3/month vs Claude Code's ~$100/month
 - **Stay secure** — I don't trust Chinese AI company CLIs with my code, so I built my own
 
 ### Recommended Workflow
 
 ```
-Gooner (GLM-4 / Gemini Flash 3)   →     Claude Code (Claude Opus 4.5)
+Gokin (GLM-4 / Gemini Flash 3)   →     Claude Code (Claude Opus 4.5)
         ↓                                         ↓
    Write code from scratch              Polish and refine the code
    Bulk file operations                 Complex architectural decisions
@@ -24,11 +24,11 @@ Gooner (GLM-4 / Gemini Flash 3)   →     Claude Code (Claude Opus 4.5)
 
 | Tool | Cost | Best For |
 |------|------|----------|
-| Gooner + GLM-4 | ~$3/month | Initial development, bulk operations |
-| Gooner + Gemini Flash 3 | Free tier available | Fast iterations, prototyping |
+| Gokin + GLM-4 | ~$3/month | Initial development, bulk operations |
+| Gokin + Gemini Flash 3 | Free tier available | Fast iterations, prototyping |
 | Claude Code | ~$100/month | Final polish, complex reasoning |
 
-> **Note:** Chinese models are currently behind frontier models like Claude, but they're improving rapidly. For best performance, use Gooner with **Gemini Flash 3** — it's fast, capable, and has a generous free tier.
+> **Note:** Chinese models are currently behind frontier models like Claude, but they're improving rapidly. For best performance, use Gokin with **Gemini Flash 3** — it's fast, capable, and has a generous free tier.
 
 ## Features
 
@@ -57,28 +57,28 @@ Gooner (GLM-4 / Gemini Flash 3)   →     Claude Code (Claude Opus 4.5)
 - **Permission System** — Control which operations require approval
 - **Hooks** — Automate actions (pre/post tool, on error, on start/exit)
 - **Themes** — Light and dark mode
-- **GOONER.md** — Project-specific instructions
+- **GOKIN.md** — Project-specific instructions
 
 ## Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/ginkida/gooner.git
-cd gooner
+git clone https://github.com/ginkida/gokin.git
+cd gokin
 
 # Build
-go build -o gooner ./cmd/gooner
+go build -o gokin ./cmd/gokin
 
 # Install via Go (recommended for macOS/Linux)
 # This installs the binary to ~/go/bin
-go install ./cmd/gooner
+go install ./cmd/gokin
 
 # Make sure ~/go/bin is in your PATH:
 # echo 'export PATH=$PATH:$(go env GOPATH)/bin' >> ~/.zshrc
 # source ~/.zshrc
 
 # Install to system PATH (optional)
-sudo mv gooner /usr/local/bin/
+sudo mv gokin /usr/local/bin/
 ```
 
 ### Requirements
@@ -99,7 +99,7 @@ Get your free Gemini API key at: https://aistudio.google.com/apikey
 export GEMINI_API_KEY="your-api-key"
 
 # Or via command in the app
-gooner
+gokin
 > /login your-api-key
 ```
 
@@ -108,7 +108,7 @@ gooner
 ```bash
 # In project directory
 cd /path/to/your/project
-gooner
+gokin
 ```
 
 ### 3. Getting Started
@@ -140,7 +140,7 @@ gooner
 
 ```bash
 # Via environment
-export GOONER_BACKEND="gemini"   # or "glm"
+export GOKIN_BACKEND="gemini"   # or "glm"
 
 # Via config.yaml
 model:
@@ -197,7 +197,7 @@ All commands start with `/`:
 |---------|-------------|
 | `/config` | Show current configuration |
 | `/doctor` | Check environment |
-| `/init` | Create GOONER.md for project |
+| `/init` | Create GOKIN.md for project |
 | `/model <name>` | Change AI model |
 | `/theme` | Switch UI theme |
 | `/permissions` | Manage tool permissions |
@@ -302,7 +302,7 @@ AI has access to 40+ tools:
 
 ## Configuration
 
-Configuration is stored in `~/.config/gooner/config.yaml`:
+Configuration is stored in `~/.config/gokin/config.yaml`:
 
 ```yaml
 api:
@@ -366,7 +366,7 @@ semantic:
   chunk_size: 500                # Characters per chunk
   chunk_overlap: 50              # Overlap between chunks
   max_file_size: 1048576         # Max file size (1MB)
-  cache_dir: "~/.config/gooner/semantic_cache"  # Index cache
+  cache_dir: "~/.config/gokin/semantic_cache"  # Index cache
   cache_ttl: 168h                # Cache TTL (7 days)
   auto_cleanup: true             # Auto-cleanup old projects (>30 days)
   index_patterns:                # Indexed files
@@ -395,11 +395,11 @@ logging:
 | Variable | Description |
 |----------|-------------|
 | `GEMINI_API_KEY` | Gemini API key |
-| `GOONER_GEMINI_KEY` | Gemini API key (alternative) |
+| `GOKIN_GEMINI_KEY` | Gemini API key (alternative) |
 | `GLM_API_KEY` | GLM API key |
-| `GOONER_GLM_KEY` | GLM API key (alternative) |
-| `GOONER_MODEL` | Model name (overrides config) |
-| `GOONER_BACKEND` | Backend: gemini or glm |
+| `GOKIN_GLM_KEY` | GLM API key (alternative) |
+| `GOKIN_MODEL` | Model name (overrides config) |
+| `GOKIN_BACKEND` | Backend: gemini or glm |
 
 ### Secure API Key Storage
 
@@ -415,11 +415,11 @@ export GLM_API_KEY="your-api-key"
 
 ## Security
 
-One of the main reasons I built Gooner was **security**. I don't trust Chinese AI company CLIs with access to my codebase. With Gooner, you control everything locally.
+One of the main reasons I built Gokin was **security**. I don't trust Chinese AI company CLIs with access to my codebase. With Gokin, you control everything locally.
 
 ### Automatic Secret Redaction
 
-Gooner automatically masks sensitive information in logs and AI outputs:
+Gokin automatically masks sensitive information in logs and AI outputs:
 
 ```
 # What you type or what appears in files:
@@ -427,7 +427,7 @@ export GEMINI_API_KEY="AIzaSyD1234567890abcdefghijk"
 password: "super_secret_password_123"
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
-# What Gooner shows to AI and logs:
+# What Gokin shows to AI and logs:
 export GEMINI_API_KEY="[REDACTED]"
 password: "[REDACTED]"
 Authorization: Bearer [REDACTED]
@@ -449,7 +449,7 @@ Authorization: Bearer [REDACTED]
 
 ### Key Masking for Display
 
-When showing API keys in status or logs, Gooner masks the middle:
+When showing API keys in status or logs, Gokin masks the middle:
 
 ```go
 // Input:  "sk-1234567890abcdef"
@@ -465,13 +465,13 @@ When showing API keys in status or logs, Gooner masks the middle:
 ### Model Override
 
 ```bash
-export GOONER_MODEL="gemini-3-flash-preview"
-export GOONER_BACKEND="gemini"  # or "glm"
+export GOKIN_MODEL="gemini-3-flash-preview"
+export GOKIN_BACKEND="gemini"  # or "glm"
 ```
 
-## GOONER.md
+## GOKIN.md
 
-Create a `GOONER.md` file in the project root for context:
+Create a `GOKIN.md` file in the project root for context:
 
 ```bash
 /init
@@ -480,7 +480,7 @@ Create a `GOONER.md` file in the project root for context:
 Example content:
 
 ```markdown
-# Project Instructions for Gooner
+# Project Instructions for Gokin
 
 ## Project Overview
 This is a Go web application using Gin framework.
@@ -522,25 +522,25 @@ AI can remember information between sessions:
 > What database do we use?
 ```
 
-Memory is stored in `~/.local/share/gooner/memory/`.
+Memory is stored in `~/.local/share/gokin/memory/`.
 
 ## Semantic Search
 
-Gooner supports semantic code search using embeddings. This allows finding code that is conceptually similar to the query, even if exact words don't match.
+Gokin supports semantic code search using embeddings. This allows finding code that is conceptually similar to the query, even if exact words don't match.
 
 ### How It Works
 
 1. **Indexing**: Project is indexed on first launch
 2. **Chunking**: Files are split into parts (chunks)
 3. **Embeddings**: Each chunk gets a vector representation
-4. **Caching**: Index is saved to `~/.config/gooner/semantic_cache/`
+4. **Caching**: Index is saved to `~/.config/gokin/semantic_cache/`
 5. **Search**: Most similar chunks are found for queries
 
 ### Per-Project Storage
 
 Each project is stored separately:
 ```
-~/.config/gooner/semantic_cache/
+~/.config/gokin/semantic_cache/
 ├── a1b2c3d4e5f6g7h8/              # Project ID (SHA256 of path)
 │   ├── embeddings.gob              # Embeddings cache
 │   ├── index.json                 # Index metadata
@@ -633,7 +633,7 @@ hooks:
     - name: "Log writes"
       type: "post_tool"
       tool_name: "write"
-      command: "echo 'File written: ${WORK_DIR}' >> /tmp/gooner.log"
+      command: "echo 'File written: ${WORK_DIR}' >> /tmp/gokin.log"
       enabled: true
 
     - name: "Format on save"
@@ -662,7 +662,7 @@ AI can create plans and request approval:
 
 ### Tree Planner
 
-For complex tasks, Gooner uses advanced planning algorithms:
+For complex tasks, Gokin uses advanced planning algorithms:
 
 | Algorithm | Description |
 |-----------|-------------|
@@ -672,7 +672,7 @@ For complex tasks, Gooner uses advanced planning algorithms:
 
 ## Multi-Agent System
 
-Gooner uses specialized agents for different tasks:
+Gokin uses specialized agents for different tasks:
 
 | Agent | Purpose |
 |-------|---------|
@@ -701,9 +701,9 @@ Long commands can run in background:
 
 | Path | Contents |
 |------|----------|
-| `~/.config/gooner/config.yaml` | Configuration |
-| `~/.local/share/gooner/sessions/` | Saved sessions |
-| `~/.local/share/gooner/memory/` | Memory data |
+| `~/.config/gokin/config.yaml` | Configuration |
+| `~/.local/share/gokin/sessions/` | Saved sessions |
+| `~/.local/share/gokin/memory/` | Memory data |
 
 ## Keyboard Shortcuts
 
@@ -768,8 +768,8 @@ Long commands can run in background:
 ## Project Structure
 
 ```
-gooner/
-├── cmd/gooner/              # Entry point
+gokin/
+├── cmd/gokin/              # Entry point
 ├── internal/
 │   ├── app/                 # Application orchestrator
 │   ├── agent/               # Multi-agent system
@@ -834,7 +834,7 @@ or
 
 ### Permission Issues
 
-Check `~/.config/gooner/config.yaml`:
+Check `~/.config/gokin/config.yaml`:
 
 ```yaml
 permission:

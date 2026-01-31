@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"gooner/internal/config"
+	"gokin/internal/config"
 )
 
 const (
@@ -82,7 +82,7 @@ func (c *HelpCommand) Execute(ctx context.Context, args []string, app AppInterfa
 
 	sb.WriteString(fmt.Sprintf(`
 %s╔═══════════════════════════════════════════════════════════════╗
-║                     📚 Gooner Commands                       ║
+║                     📚 Gokin Commands                        ║
 ╚═══════════════════════════════════════════════════════════════╝%s
 
 %sNavigation:%s
@@ -361,11 +361,11 @@ func (c *UndoCommand) Execute(ctx context.Context, args []string, app AppInterfa
 	return fmt.Sprintf("Undone change to: %s", change.FilePath), nil
 }
 
-// InitCommand initializes GOONER.md for the project.
+// InitCommand initializes GOKIN.md for the project.
 type InitCommand struct{}
 
 func (c *InitCommand) Name() string        { return "init" }
-func (c *InitCommand) Description() string { return "Initialize GOONER.md for this project" }
+func (c *InitCommand) Description() string { return "Initialize GOKIN.md for this project" }
 func (c *InitCommand) Usage() string       { return "/init" }
 func (c *InitCommand) GetMetadata() CommandMetadata {
 	return CommandMetadata{
@@ -377,14 +377,14 @@ func (c *InitCommand) GetMetadata() CommandMetadata {
 
 func (c *InitCommand) Execute(ctx context.Context, args []string, app AppInterface) (string, error) {
 	workDir := app.GetWorkDir()
-	goonerPath := filepath.Join(workDir, "GOONER.md")
+	gokinPath := filepath.Join(workDir, "GOKIN.md")
 
 	// Check if file already exists
-	if _, err := os.Stat(goonerPath); err == nil {
-		return "GOONER.md already exists. Edit it manually or delete to reinitialize.", nil
+	if _, err := os.Stat(gokinPath); err == nil {
+		return "GOKIN.md already exists. Edit it manually or delete to reinitialize.", nil
 	}
 
-	template := `# Project Instructions for Gooner
+	template := `# Project Instructions for Gokin
 
 ## Project Overview
 <!-- Describe your project here -->
@@ -402,11 +402,11 @@ func (c *InitCommand) Execute(ctx context.Context, args []string, app AppInterfa
 <!-- Add build and deployment instructions -->
 `
 
-	if err := os.WriteFile(goonerPath, []byte(template), 0644); err != nil {
-		return fmt.Sprintf("Failed to create GOONER.md: %v", err), nil
+	if err := os.WriteFile(gokinPath, []byte(template), 0644); err != nil {
+		return fmt.Sprintf("Failed to create GOKIN.md: %v", err), nil
 	}
 
-	return "Created GOONER.md - edit it to add project-specific instructions.", nil
+	return "Created GOKIN.md - edit it to add project-specific instructions.", nil
 }
 
 // DoctorCommand checks environment and configuration.
@@ -486,13 +486,13 @@ func (c *DoctorCommand) Execute(ctx context.Context, args []string, app AppInter
 		sb.WriteString(fmt.Sprintf("  %s○%s gh (GitHub CLI) not installed (optional for /pr)\n", colorYellow, colorReset))
 	}
 
-	// GOONER.md
+	// GOKIN.md
 	workDir := app.GetWorkDir()
-	goonerPath := filepath.Join(workDir, "GOONER.md")
-	if _, err := os.Stat(goonerPath); err == nil {
-		sb.WriteString(fmt.Sprintf("  %s✓%s GOONER.md found\n", colorGreen, colorReset))
+	gokinPath := filepath.Join(workDir, "GOKIN.md")
+	if _, err := os.Stat(gokinPath); err == nil {
+		sb.WriteString(fmt.Sprintf("  %s✓%s GOKIN.md found\n", colorGreen, colorReset))
 	} else {
-		sb.WriteString(fmt.Sprintf("  %s○%s GOONER.md not found (use /init to create)\n", colorYellow, colorReset))
+		sb.WriteString(fmt.Sprintf("  %s○%s GOKIN.md not found (use /init to create)\n", colorYellow, colorReset))
 	}
 
 	// Data directories
@@ -520,7 +520,7 @@ func (c *DoctorCommand) Execute(ctx context.Context, args []string, app AppInter
 	sb.WriteString(fmt.Sprintf("\n%sCommands to fix issues:%s\n", colorCyan, colorReset))
 	sb.WriteString(fmt.Sprintf("  %s/login%s    - Set up authentication\n", colorGreen, colorReset))
 	sb.WriteString(fmt.Sprintf("  %s/test%s     - Test all settings\n", colorGreen, colorReset))
-	sb.WriteString(fmt.Sprintf("  %s/init%s     - Create GOONER.md\n", colorGreen, colorReset))
+	sb.WriteString(fmt.Sprintf("  %s/init%s     - Create GOKIN.md\n", colorGreen, colorReset))
 
 	return sb.String(), nil
 }
@@ -779,5 +779,5 @@ func getDataDir() (string, error) {
 		}
 		dataDir = filepath.Join(home, ".local", "share")
 	}
-	return filepath.Join(dataDir, "gooner"), nil
+	return filepath.Join(dataDir, "gokin"), nil
 }

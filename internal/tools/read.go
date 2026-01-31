@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gooner/internal/logging"
-	"gooner/internal/security"
-	"gooner/internal/tools/readers"
+	"gokin/internal/logging"
+	"gokin/internal/security"
+	"gokin/internal/tools/readers"
 
 	"google.golang.org/genai"
 )

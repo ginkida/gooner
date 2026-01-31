@@ -16,7 +16,7 @@ type AgentStore struct {
 }
 
 // NewAgentStore creates a new agent store.
-// configDir should be the base config directory (e.g., ~/.config/gooner).
+// configDir should be the base config directory (e.g., ~/.config/gokin).
 func NewAgentStore(configDir string) (*AgentStore, error) {
 	dir := filepath.Join(configDir, "agents")
 	if err := os.MkdirAll(dir, 0755); err != nil {

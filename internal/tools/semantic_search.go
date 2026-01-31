@@ -7,7 +7,7 @@ import (
 
 	"google.golang.org/genai"
 
-	"gooner/internal/semantic"
+	"gokin/internal/semantic"
 )
 
 // SemanticSearchTool performs semantic search across indexed files.

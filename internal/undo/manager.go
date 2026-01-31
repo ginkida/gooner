@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"gooner/internal/fileutil"
+	"gokin/internal/fileutil"
 )
 
 // Manager provides undo and redo functionality.

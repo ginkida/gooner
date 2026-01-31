@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"gooner/internal/logging"
+	"gokin/internal/logging"
 )
 
 // SessionManager handles automatic session persistence.

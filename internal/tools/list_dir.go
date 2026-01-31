@@ -8,7 +8,7 @@ import (
 
 	"google.golang.org/genai"
 
-	"gooner/internal/security"
+	"gokin/internal/security"
 )
 
 // ListDirTool lists the contents of a directory.

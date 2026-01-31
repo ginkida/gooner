@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"gooner/internal/logging"
+	"gokin/internal/logging"
 )
 
 // StrategyMetrics tracks performance metrics for a strategy.

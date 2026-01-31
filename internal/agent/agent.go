@@ -10,12 +10,12 @@ import (
 	"sync"
 	"time"
 
-	"gooner/internal/client"
-	"gooner/internal/config"
-	ctxmgr "gooner/internal/context"
-	"gooner/internal/logging"
-	"gooner/internal/permission"
-	"gooner/internal/tools"
+	"gokin/internal/client"
+	"gokin/internal/config"
+	ctxmgr "gokin/internal/context"
+	"gokin/internal/logging"
+	"gokin/internal/permission"
+	"gokin/internal/tools"
 
 	"google.golang.org/genai"
 )
@@ -732,7 +732,7 @@ func (a *Agent) buildGuidePrompt() string {
                          GUIDE AGENT
 ═══════════════════════════════════════════════════════════════════════
 
-YOUR MISSION: Answer questions about Gooner CLI and its features.
+YOUR MISSION: Answer questions about Gokin CLI and its features.
 
 APPROACH:
 1. Search documentation for accurate info
@@ -750,7 +750,7 @@ RESPONSE FORMAT:
 ## Examples
 ` + "```" + `bash
 # Example usage
-gooner [command] [options]
+gokin [command] [options]
 ` + "```" + `
 
 ## Related Information

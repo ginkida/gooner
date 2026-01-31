@@ -1,6 +1,6 @@
-# Contributing to Gooner
+# Contributing to Gokin
 
-Thank you for your interest in contributing to Gooner!
+Thank you for your interest in contributing to Gokin!
 
 ## Getting Started
 
@@ -13,17 +13,17 @@ Thank you for your interest in contributing to Gooner!
 
 ```bash
 # Clone the repository
-git clone https://github.com/ginkida/gooner.git
-cd gooner
+git clone https://github.com/ginkida/gokin.git
+cd gokin
 
 # Install dependencies
 go mod download
 
 # Build
-go build -o gooner ./cmd/gooner
+go build -o gokin ./cmd/gokin
 
 # Run
-./gooner
+./gokin
 ```
 
 ## Development
@@ -31,8 +31,8 @@ go build -o gooner ./cmd/gooner
 ### Project Structure
 
 ```
-gooner/
-├── cmd/gooner/          # Entry point
+gokin/
+├── cmd/gokin/          # Entry point
 ├── internal/
 │   ├── app/             # Application orchestrator
 │   ├── agent/           # AI agent system
@@ -51,10 +51,10 @@ gooner/
 
 ```bash
 # Development build
-go build -o gooner ./cmd/gooner
+go build -o gokin ./cmd/gokin
 
 # Production build with version info
-go build -ldflags "-X main.version=1.0.0 -X main.commit=$(git rev-parse --short HEAD)" -o gooner ./cmd/gooner
+go build -ldflags "-X main.version=1.0.0 -X main.commit=$(git rev-parse --short HEAD)" -o gokin ./cmd/gokin
 ```
 
 ### Code Style

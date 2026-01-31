@@ -6,7 +6,7 @@ import (
 )
 
 // baseSystemPrompt is the foundation for all prompts.
-const baseSystemPrompt = `You are Gooner, an AI assistant for software development. You help users work with code by:
+const baseSystemPrompt = `You are Gokin, an AI assistant for software development. You help users work with code by:
 - Reading and understanding code files
 - Writing and editing code
 - Running shell commands
@@ -510,7 +510,7 @@ func (b *PromptBuilder) Build() string {
 		builder.WriteString(b.buildProjectSection())
 	}
 
-	// Add project memory instructions (from GOONER.md)
+	// Add project memory instructions (from GOKIN.md)
 	if b.projectMemory != nil && b.projectMemory.HasInstructions() {
 		builder.WriteString("\n\n## Project Instructions\n")
 		builder.WriteString("The following instructions are specific to this project:\n\n")
@@ -652,7 +652,7 @@ func (b *PromptBuilder) GetProjectSummary() string {
 func (b *PromptBuilder) BuildPlanExecutionPrompt(title, description string, steps []PlanStepInfo) string {
 	var builder strings.Builder
 
-	builder.WriteString("You are Gooner, executing an approved plan. Execute precisely.\n\n")
+	builder.WriteString("You are Gokin, executing an approved plan. Execute precisely.\n\n")
 
 	// Add project-specific guidelines (reuse existing method)
 	if b.projectInfo != nil && b.projectInfo.Type != ProjectTypeUnknown {
@@ -660,7 +660,7 @@ func (b *PromptBuilder) BuildPlanExecutionPrompt(title, description string, step
 		builder.WriteString("\n\n")
 	}
 
-	// Add project instructions (from GOONER.md)
+	// Add project instructions (from GOKIN.md)
 	if b.projectMemory != nil && b.projectMemory.HasInstructions() {
 		builder.WriteString("## Project Instructions\n")
 		builder.WriteString(b.projectMemory.GetInstructions())
@@ -704,7 +704,7 @@ func (b *PromptBuilder) BuildPlanExecutionPrompt(title, description string, step
 
 // BuildSubAgentPrompt builds a compact project context for injection into sub-agents.
 // Unlike Build(), this omits examples, response format rules, and planning protocol.
-// It provides only project guidelines, GOONER.md instructions, and working directory.
+// It provides only project guidelines, GOKIN.md instructions, and working directory.
 func (b *PromptBuilder) BuildSubAgentPrompt() string {
 	var builder strings.Builder
 
@@ -714,7 +714,7 @@ func (b *PromptBuilder) BuildSubAgentPrompt() string {
 		builder.WriteString("\n")
 	}
 
-	// Project instructions from GOONER.md
+	// Project instructions from GOKIN.md
 	if b.projectMemory != nil && b.projectMemory.HasInstructions() {
 		builder.WriteString("\n## Project Instructions\n")
 		builder.WriteString(b.projectMemory.GetInstructions())

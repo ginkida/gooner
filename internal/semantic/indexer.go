@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"gooner/internal/git"
+	"gokin/internal/git"
 )
 
 // ChunkInfo represents a chunk of code with its embedding.

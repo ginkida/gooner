@@ -76,7 +76,7 @@ func (m *Model) Welcome() {
 	m.output.AppendLine(borderStyle.Render("│") + strings.Repeat(" ", boxWidth) + borderStyle.Render("│"))
 
 	// Title
-	titleText := "GOONER"
+	titleText := "GOKIN"
 	titlePad := (boxWidth - len(titleText)) / 2
 	m.output.AppendLine(borderStyle.Render("│") +
 		strings.Repeat(" ", titlePad) + titleStyle.Render(titleText) +

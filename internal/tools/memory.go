@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"gooner/internal/memory"
+	"gokin/internal/memory"
 
 	"google.golang.org/genai"
 )

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"gooner/internal/tasks"
+	"gokin/internal/tasks"
 
 	"google.golang.org/genai"
 )

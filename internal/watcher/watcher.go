@@ -8,7 +8,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
-	"gooner/internal/git"
+	"gokin/internal/git"
 )
 
 // Watcher monitors file system changes in a directory.

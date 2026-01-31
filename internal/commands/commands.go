@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"strings"
 
-	"gooner/internal/agent"
-	"gooner/internal/chat"
-	"gooner/internal/config"
-	appcontext "gooner/internal/context"
-	"gooner/internal/plan"
-	"gooner/internal/semantic"
-	"gooner/internal/tools"
-	"gooner/internal/undo"
+	"gokin/internal/agent"
+	"gokin/internal/chat"
+	"gokin/internal/config"
+	appcontext "gokin/internal/context"
+	"gokin/internal/plan"
+	"gokin/internal/semantic"
+	"gokin/internal/tools"
+	"gokin/internal/undo"
 )
 
 // TokenStats holds token usage statistics for the session.

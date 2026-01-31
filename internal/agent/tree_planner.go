@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"gooner/internal/client"
-	"gooner/internal/logging"
+	"gokin/internal/client"
+	"gokin/internal/logging"
 )
 
 // SearchAlgorithm defines the algorithm used for tree search.

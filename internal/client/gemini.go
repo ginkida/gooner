@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"gooner/internal/config"
-	"gooner/internal/logging"
-	"gooner/internal/ratelimit"
-	"gooner/internal/security"
+	"gokin/internal/config"
+	"gokin/internal/logging"
+	"gokin/internal/ratelimit"
+	"gokin/internal/security"
 
 	"google.golang.org/genai"
 )

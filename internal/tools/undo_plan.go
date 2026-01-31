@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"gooner/internal/plan"
-	"gooner/internal/undo"
+	"gokin/internal/plan"
+	"gokin/internal/undo"
 
 	"google.golang.org/genai"
 )

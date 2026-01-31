@@ -6,10 +6,10 @@ import (
 	"strings"
 	"sync"
 
-	"gooner/internal/agent"
-	"gooner/internal/client"
-	"gooner/internal/logging"
-	"gooner/internal/tools"
+	"gokin/internal/agent"
+	"gokin/internal/client"
+	"gokin/internal/logging"
+	"gokin/internal/tools"
 
 	"google.golang.org/genai"
 )

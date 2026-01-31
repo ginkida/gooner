@@ -95,7 +95,7 @@ func GetAPIKey(envVarNames []string, configValue string, keyringService string) 
 // GetGeminiKey loads the Gemini API key from environment or config
 //
 // Environment variables checked (in priority order):
-//   - GOONER_GEMINI_KEY (recommended, explicit)
+//   - GOKIN_GEMINI_KEY (recommended, explicit)
 //   - GEMINI_API_KEY (generic, for compatibility)
 //   - GOOGLE_API_KEY (generic Google API key)
 //
@@ -104,9 +104,9 @@ func GetAPIKey(envVarNames []string, configValue string, keyringService string) 
 //   - api.api_key (legacy field, for backward compatibility)
 func GetGeminiKey(configGeminiKey, configLegacyKey string) *LoadedKey {
 	envVars := []string{
-		"GOONER_GEMINI_KEY", // Preferred, explicit
-		"GEMINI_API_KEY",    // Generic Gemini
-		"GOOGLE_API_KEY",    // Generic Google
+		"GOKIN_GEMINI_KEY", // Preferred, explicit
+		"GEMINI_API_KEY",   // Generic Gemini
+		"GOOGLE_API_KEY",   // Generic Google
 	}
 
 	// Try new config field first, then legacy
@@ -121,7 +121,7 @@ func GetGeminiKey(configGeminiKey, configLegacyKey string) *LoadedKey {
 // GetGLMKey loads the GLM (GLM-4.7) API key from environment or config
 //
 // Environment variables checked (in priority order):
-//   - GOONER_GLM_KEY (recommended, explicit)
+//   - GOKIN_GLM_KEY (recommended, explicit)
 //   - GLM_API_KEY (generic)
 //   - ANTHROPIC_API_KEY (for Anthropic-compatible APIs)
 //
@@ -130,9 +130,9 @@ func GetGeminiKey(configGeminiKey, configLegacyKey string) *LoadedKey {
 //   - api.anthropic_api_key (legacy field, for backward compatibility)
 func GetGLMKey(configGLMKey, configLegacyKey string) *LoadedKey {
 	envVars := []string{
-		"GOONER_GLM_KEY",     // Preferred, explicit
-		"GLM_API_KEY",        // Generic GLM
-		"ANTHROPIC_API_KEY",  // Anthropic-compatible
+		"GOKIN_GLM_KEY",     // Preferred, explicit
+		"GLM_API_KEY",       // Generic GLM
+		"ANTHROPIC_API_KEY", // Anthropic-compatible
 	}
 
 	// Try new config field first, then legacy

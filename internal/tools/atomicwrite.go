@@ -3,7 +3,7 @@ package tools
 import (
 	"os"
 
-	"gooner/internal/fileutil"
+	"gokin/internal/fileutil"
 )
 
 // AtomicWrite writes data to a file atomically using a tmp file + rename pattern.

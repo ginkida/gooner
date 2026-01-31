@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"gooner/internal/agent"
+	"gokin/internal/agent"
 )
 
 // TreeStatsCommand shows tree planner statistics.

@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"gooner/internal/logging"
-	"gooner/internal/security"
-	"gooner/internal/ssh"
-	"gooner/internal/tasks"
+	"gokin/internal/logging"
+	"gokin/internal/security"
+	"gokin/internal/ssh"
+	"gokin/internal/tasks"
 
 	"google.golang.org/genai"
 )

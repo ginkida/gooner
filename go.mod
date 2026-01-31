@@ -1,4 +1,4 @@
-module gooner
+module gokin
 
 go 1.25.6
 

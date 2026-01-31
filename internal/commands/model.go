@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"gooner/internal/client"
+	"gokin/internal/client"
 )
 
 // ModelCommand switches the current model.

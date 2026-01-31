@@ -8,7 +8,7 @@ import (
 
 	"google.golang.org/genai"
 
-	"gooner/internal/undo"
+	"gokin/internal/undo"
 )
 
 // UndoTool provides undo/redo functionality for file operations.

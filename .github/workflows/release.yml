@@ -23,31 +23,31 @@ jobs:
       - name: Build binaries
         run: |
           # Linux
-          GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o gooner-linux-amd64 ./cmd/gooner
-          GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o gooner-linux-arm64 ./cmd/gooner
+          GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o gokin-linux-amd64 ./cmd/gokin
+          GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o gokin-linux-arm64 ./cmd/gokin
 
           # macOS
-          GOOS=darwin GOARCH=amd64 go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o gooner-darwin-amd64 ./cmd/gooner
-          GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o gooner-darwin-arm64 ./cmd/gooner
+          GOOS=darwin GOARCH=amd64 go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o gokin-darwin-amd64 ./cmd/gokin
+          GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o gokin-darwin-arm64 ./cmd/gokin
 
           # Windows
-          GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o gooner-windows-amd64.exe ./cmd/gooner
+          GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o gokin-windows-amd64.exe ./cmd/gokin
 
       - name: Create archives
         run: |
-          tar -czvf gooner-linux-amd64.tar.gz gooner-linux-amd64
-          tar -czvf gooner-linux-arm64.tar.gz gooner-linux-arm64
-          tar -czvf gooner-darwin-amd64.tar.gz gooner-darwin-amd64
-          tar -czvf gooner-darwin-arm64.tar.gz gooner-darwin-arm64
-          zip gooner-windows-amd64.zip gooner-windows-amd64.exe
+          tar -czvf gokin-linux-amd64.tar.gz gokin-linux-amd64
+          tar -czvf gokin-linux-arm64.tar.gz gokin-linux-arm64
+          tar -czvf gokin-darwin-amd64.tar.gz gokin-darwin-amd64
+          tar -czvf gokin-darwin-arm64.tar.gz gokin-darwin-arm64
+          zip gokin-windows-amd64.zip gokin-windows-amd64.exe
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
-            gooner-linux-amd64.tar.gz
-            gooner-linux-arm64.tar.gz
-            gooner-darwin-amd64.tar.gz
-            gooner-darwin-arm64.tar.gz
-            gooner-windows-amd64.zip
+            gokin-linux-amd64.tar.gz
+            gokin-linux-arm64.tar.gz
+            gokin-darwin-amd64.tar.gz
+            gokin-darwin-arm64.tar.gz
+            gokin-windows-amd64.zip

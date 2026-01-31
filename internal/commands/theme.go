@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"gooner/internal/ui"
+	"gokin/internal/ui"
 )
 
 // ThemeCommand switches the UI theme.

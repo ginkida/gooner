@@ -6,12 +6,12 @@ import (
 	"sync"
 	"time"
 
-	"gooner/internal/client"
-	"gooner/internal/config"
-	"gooner/internal/logging"
-	"gooner/internal/memory"
-	"gooner/internal/permission"
-	"gooner/internal/tools"
+	"gokin/internal/client"
+	"gokin/internal/config"
+	"gokin/internal/logging"
+	"gokin/internal/memory"
+	"gokin/internal/permission"
+	"gokin/internal/tools"
 )
 
 // ActivityReporter is an interface for reporting agent activity.

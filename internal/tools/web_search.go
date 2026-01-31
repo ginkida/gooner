@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"gooner/internal/security"
+	"gokin/internal/security"
 
 	"google.golang.org/genai"
 )

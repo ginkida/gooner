@@ -9,13 +9,13 @@ import (
 	"sync"
 	"time"
 
-	"gooner/internal/audit"
-	"gooner/internal/client"
-	"gooner/internal/hooks"
-	"gooner/internal/logging"
-	"gooner/internal/permission"
-	"gooner/internal/robustness"
-	"gooner/internal/security"
+	"gokin/internal/audit"
+	"gokin/internal/client"
+	"gokin/internal/hooks"
+	"gokin/internal/logging"
+	"gokin/internal/permission"
+	"gokin/internal/robustness"
+	"gokin/internal/security"
 
 	"google.golang.org/genai"
 )

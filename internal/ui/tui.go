@@ -1048,7 +1048,7 @@ func (m *Model) handleMessageTypes(msg tea.Msg) tea.Cmd {
 		m.projectName = msg.ProjectName
 		// Update iTerm2 badge when project info is received
 		if runtime.GOOS == "darwin" && m.projectName != "" {
-			badge := "Gooner: " + m.projectName
+			badge := "Gokin: " + m.projectName
 			if m.gitBranch != "" {
 				badge += " (" + m.gitBranch + ")"
 			}

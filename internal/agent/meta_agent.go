@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"gooner/internal/logging"
+	"gokin/internal/logging"
 )
 
 // AgentMonitor tracks the state of a running agent.

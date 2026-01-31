@@ -5,7 +5,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"gooner/internal/logging"
+	"gokin/internal/logging"
 )
 
 // UIUpdateManager coordinates periodic UI updates

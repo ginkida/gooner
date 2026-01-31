@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"gooner/internal/config"
-	"gooner/internal/logging"
-	"gooner/internal/security"
+	"gokin/internal/config"
+	"gokin/internal/logging"
+	"gokin/internal/security"
 )
 
 // NewClient creates a client based on the configuration and model provider.
@@ -69,7 +69,7 @@ func newGLMClient(cfg *config.Config, modelID string) (Client, error) {
 	loadedKey := security.GetGLMKey(cfg.API.GLMKey, cfg.API.APIKey)
 
 	if !loadedKey.IsSet() {
-		return nil, fmt.Errorf("GLM API key required (set GOONER_GLM_KEY environment variable or use /login glm <key>)")
+		return nil, fmt.Errorf("GLM API key required (set GOKIN_GLM_KEY environment variable or use /login glm <key>)")
 	}
 
 	// Log key source for debugging (without exposing the key)

@@ -90,7 +90,7 @@ func defaultCommands() []CommandInfo {
 		{Name: "restore", Description: "Restore a checkpoint", Category: "History"},
 
 		// Git commands
-		{Name: "init", Description: "Initialize GOONER.md", Category: "Git"},
+		{Name: "init", Description: "Initialize GOKIN.md", Category: "Git"},
 
 		// Auth commands
 		{Name: "login", Description: "Login with API key or OAuth", Category: "Auth"},
@@ -554,7 +554,7 @@ func getHistoryPath() (string, error) {
 		dataDir = filepath.Join(home, ".local", "share")
 	}
 
-	return filepath.Join(dataDir, "gooner", historyFile), nil
+	return filepath.Join(dataDir, "gokin", historyFile), nil
 }
 
 // SetActiveTask sets the active task name for placeholder context.

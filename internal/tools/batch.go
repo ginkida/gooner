@@ -11,7 +11,7 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 	"google.golang.org/genai"
 
-	"gooner/internal/undo"
+	"gokin/internal/undo"
 )
 
 // BatchTool performs batch operations on multiple files.

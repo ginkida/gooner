@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"gooner/internal/logging"
+	"gokin/internal/logging"
 )
 
 // SessionInfo represents information about an active SSH session.

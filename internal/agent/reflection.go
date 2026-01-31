@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"gooner/internal/memory"
+	"gokin/internal/memory"
 )
 
 // Reflector analyzes tool execution failures and suggests recovery strategies.

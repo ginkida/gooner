@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"gooner/internal/logging"
+	"gokin/internal/logging"
 )
 
 // PromptVariant represents a variation of a prompt with its performance metrics.

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"gooner/internal/logging"
+	"gokin/internal/logging"
 )
 
 // Task represents a task to be executed in parallel.

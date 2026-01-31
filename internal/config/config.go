@@ -419,7 +419,7 @@ func DefaultConfig() *Config {
 			AutoDetect:      true,
 			AutoVerify:      true,
 			VerifyTimeout:   2 * time.Minute,
-			StorePath:       ".gooner/contracts/",
+			StorePath:       ".gokin/contracts/",
 			InjectContext:   true,
 		},
 	}

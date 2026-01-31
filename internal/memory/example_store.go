@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"gooner/internal/logging"
+	"gokin/internal/logging"
 )
 
 // TaskExample represents a successful task execution that can be used for few-shot learning.

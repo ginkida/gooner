@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"gooner/internal/contract"
+	"gokin/internal/contract"
 )
 
 // ContractSpec holds optional contract fields for a plan.

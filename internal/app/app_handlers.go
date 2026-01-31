@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	"gooner/internal/config"
-	"gooner/internal/logging"
-	"gooner/internal/permission"
-	"gooner/internal/plan"
-	"gooner/internal/ui"
+	"gokin/internal/config"
+	"gokin/internal/logging"
+	"gokin/internal/permission"
+	"gokin/internal/plan"
+	"gokin/internal/ui"
 )
 
 // PermissionTimeout is the maximum time to wait for a permission response.

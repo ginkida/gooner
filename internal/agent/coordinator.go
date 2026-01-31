@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"gooner/internal/logging"
+	"gokin/internal/logging"
 )
 
 // Coordinator manages multiple agents with dependencies and parallelism.

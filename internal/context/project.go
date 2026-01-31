@@ -18,7 +18,7 @@ func GetConfigDir() (string, error) {
 		}
 		configDir = filepath.Join(home, ".config")
 	}
-	return filepath.Join(configDir, "gooner"), nil
+	return filepath.Join(configDir, "gokin"), nil
 }
 
 // ProjectType represents the detected project type.

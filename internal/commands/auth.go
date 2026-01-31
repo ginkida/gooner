@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"gooner/internal/config"
+	"gokin/internal/config"
 )
 
 // LoginCommand sets the API key.

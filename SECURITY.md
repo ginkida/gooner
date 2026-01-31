@@ -8,7 +8,7 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in Gooner, please report it responsibly.
+If you discover a security vulnerability in Gokin, please report it responsibly.
 
 ### How to Report
 
@@ -45,26 +45,26 @@ If you discover a security vulnerability in Gooner, please report it responsibly
 # Set API key in environment (recommended)
 export GEMINI_API_KEY="your-api-key"
 
-# Or use Gooner-specific variable
-export GOONER_GEMINI_KEY="your-api-key"
+# Or use Gokin-specific variable
+export GOKIN_GEMINI_KEY="your-api-key"
 ```
 
 **Avoid:** Storing API keys in `config.yaml`. If you must, ensure the file has restricted permissions:
 
 ```bash
-chmod 600 ~/.config/gooner/config.yaml
+chmod 600 ~/.config/gokin/config.yaml
 ```
 
 ### File Permissions
 
-Gooner automatically sets secure permissions:
+Gokin automatically sets secure permissions:
 - Config files: `0600` (owner read/write only)
 - Config directory: `0700` (owner only)
 - OAuth tokens: `0600` (owner read/write only)
 
 ### Blocked Operations
 
-Gooner blocks dangerous commands by default:
+Gokin blocks dangerous commands by default:
 - Fork bombs
 - Destructive operations (`rm -rf /`, `mkfs`)
 - Reverse shells
@@ -80,7 +80,7 @@ Gooner blocks dangerous commands by default:
 
 ### Secret Redaction
 
-Gooner automatically redacts sensitive information from logs and outputs:
+Gokin automatically redacts sensitive information from logs and outputs:
 - API keys (Google, AWS, GitHub, Stripe)
 - Bearer/JWT tokens
 - Database connection strings
@@ -99,7 +99,7 @@ All bash commands are validated against a blocklist before execution.
 
 ## Known Limitations
 
-1. **Local execution**: Gooner runs with user permissions
+1. **Local execution**: Gokin runs with user permissions
 2. **AI-generated code**: Review all AI-suggested code before execution
 3. **Third-party APIs**: API keys are sent to Google Gemini servers
 

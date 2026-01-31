@@ -1,5 +1,5 @@
 # Binaries
-/gooner
+/gokin
 *.exe
 *.exe~
 *.dll
@@ -55,3 +55,4 @@ build/
 # Debug
 debug/
 *.prof
+.claude/

@@ -3,7 +3,7 @@ package app
 import (
 	"time"
 
-	"gooner/internal/logging"
+	"gokin/internal/logging"
 )
 
 // initializeUIUpdateSystem initializes the UI Auto-Update System.

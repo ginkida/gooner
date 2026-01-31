@@ -11,9 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	"gooner/internal/logging"
-	"gooner/internal/security"
-	"gooner/internal/tasks"
+	"gokin/internal/logging"
+	"gokin/internal/security"
+	"gokin/internal/tasks"
 
 	"google.golang.org/genai"
 )

@@ -11,10 +11,10 @@ type QuickstartCommand struct{}
 const (
 	quickstartHeader = `
 %s╔═══════════════════════════════════════════════════════════════╗
-║                    Quick Start with Gooner                    ║
+║                    Quick Start with Gokin                    ║
 ╚═══════════════════════════════════════════════════════════════╝%s
 
-Gooner is an AI assistant that understands your project context
+Gokin is an AI assistant that understands your project context
 and helps with coding using natural language.
 
 %s──── 5 Simple Examples to Get Started ───%s
@@ -70,7 +70,7 @@ and helps with coding using natural language.
 
 %s──── Ready to Start? ───%s
 
-Just start asking questions! Gooner understands natural language.
+Just start asking questions! Gokin understands natural language.
 
 %sExample:%s "Analyze the project structure and suggest improvements"
 `

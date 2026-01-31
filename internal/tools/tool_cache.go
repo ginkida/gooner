@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"gooner/internal/logging"
+	"gokin/internal/logging"
 )
 
 // CacheEntry represents a cached tool result with metadata.

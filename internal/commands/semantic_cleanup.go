@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"gooner/internal/semantic"
+	"gokin/internal/semantic"
 )
 
 type SemanticCleanupCommand struct{}

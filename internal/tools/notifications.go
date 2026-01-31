@@ -138,9 +138,9 @@ func (nm *NotificationManager) sendNativeNotification(n Notification) {
 		return
 	}
 
-	title := "Gooner"
+	title := "Gokin"
 	if n.ToolName != "" {
-		title = fmt.Sprintf("Gooner: %s", n.ToolName)
+		title = fmt.Sprintf("Gokin: %s", n.ToolName)
 	}
 
 	// Escape message for AppleScript

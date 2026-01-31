@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"gooner/internal/logging"
+	"gokin/internal/logging"
 )
 
 // TaskStatus represents the current state of a task in the dependency graph.

@@ -8,7 +8,7 @@ import (
 
 	"google.golang.org/genai"
 
-	"gooner/internal/semantic"
+	"gokin/internal/semantic"
 )
 
 // CodeGraphTool provides code graph and dependency analysis.

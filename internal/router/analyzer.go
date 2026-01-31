@@ -8,8 +8,8 @@ import (
 	"strings"
 	"unicode"
 
-	"gooner/internal/client"
-	"gooner/internal/logging"
+	"gokin/internal/client"
+	"gokin/internal/logging"
 )
 
 // TaskType represents the type of task
