@@ -1,0 +1,143 @@
+# Contributing to Gooner
+
+Thank you for your interest in contributing to Gooner!
+
+## Getting Started
+
+### Prerequisites
+
+- Go 1.23 or higher
+- Git
+
+### Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/ginkida/gooner.git
+cd gooner
+
+# Install dependencies
+go mod download
+
+# Build
+go build -o gooner ./cmd/gooner
+
+# Run
+./gooner
+```
+
+## Development
+
+### Project Structure
+
+```
+gooner/
+├── cmd/gooner/          # Entry point
+├── internal/
+│   ├── app/             # Application orchestrator
+│   ├── agent/           # AI agent system
+│   ├── client/          # API clients (Gemini, GLM)
+│   ├── tools/           # AI tools (read, write, bash, etc.)
+│   ├── ui/              # TUI interface (Bubble Tea)
+│   ├── config/          # Configuration
+│   ├── context/         # Context management
+│   ├── permission/      # Permission system
+│   └── ...
+├── go.mod
+└── README.md
+```
+
+### Building
+
+```bash
+# Development build
+go build -o gooner ./cmd/gooner
+
+# Production build with version info
+go build -ldflags "-X main.version=1.0.0 -X main.commit=$(git rev-parse --short HEAD)" -o gooner ./cmd/gooner
+```
+
+### Code Style
+
+- Follow standard Go conventions
+- Use `gofmt` for formatting
+- Use `go vet` for static analysis
+
+```bash
+# Format code
+gofmt -w .
+
+# Run vet
+go vet ./...
+```
+
+## Making Changes
+
+### Workflow
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/my-feature`
+3. Make your changes
+4. Run tests and linting
+5. Commit with clear messages
+6. Push to your fork
+7. Open a Pull Request
+
+### Commit Messages
+
+Use clear, descriptive commit messages:
+
+```
+feat: add semantic search support
+fix: resolve token counting issue
+docs: update installation instructions
+refactor: simplify context manager
+```
+
+### Pull Requests
+
+- Describe what changes you made and why
+- Reference any related issues
+- Keep PRs focused on a single feature or fix
+
+## Adding New Tools
+
+To add a new AI tool:
+
+1. Create a new file in `internal/tools/`
+2. Implement the `Tool` interface
+3. Register the tool in `internal/tools/registry.go`
+
+Example:
+
+```go
+// internal/tools/my_tool.go
+package tools
+
+type MyTool struct{}
+
+func (t *MyTool) Name() string {
+    return "my_tool"
+}
+
+func (t *MyTool) Description() string {
+    return "Description of what the tool does"
+}
+
+func (t *MyTool) Execute(ctx context.Context, params map[string]any) (string, error) {
+    // Implementation
+}
+```
+
+## Reporting Issues
+
+When reporting bugs:
+
+- Use a clear, descriptive title
+- Describe steps to reproduce
+- Include expected vs actual behavior
+- Add system info (OS, Go version)
+
+## Questions?
+
+Feel free to open an issue for questions or discussions.

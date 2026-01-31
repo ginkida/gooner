@@ -1,0 +1,57 @@
+# Binaries
+gooner
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Dependency directories
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Config with secrets (user-specific)
+config.yaml
+config.yml
+
+# Logs
+*.log
+logs/
+
+# Local environment
+.env
+.env.local
+.env.*.local
+
+# Build output
+dist/
+build/
+
+# Debug
+debug/
+*.prof

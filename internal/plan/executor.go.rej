@@ -1,0 +1,11 @@
+--- internal/plan/executor.go
++++ internal/plan/executor.go
+@@ -32,6 +32,8 @@ type Manager struct {
+ 	approvalHandler  ApprovalHandler
+ 	onStepStart      StepHandler
+ 	onStepComplete   StepHandler
++	onProgressUpdate func(progress *ProgressUpdate) // NEW: Progress update handler
+ 
+ 	mu sync.RWMutex
+ }
++
