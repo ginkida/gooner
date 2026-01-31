@@ -1,6 +1,6 @@
-# Gokin
+![Gokin](https://minio.ginkida.dev/minion/github/gokin.jpg)
 
-AI-powered coding assistant for software development. A cost-effective alternative when Claude Code limits run out.
+---
 
 ## Why Gokin?
 

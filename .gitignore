@@ -55,4 +55,7 @@ build/
 # Debug
 debug/
 *.prof
+
+# AI assistant files
 .claude/
+CLAUDE.md
