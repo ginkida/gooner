@@ -1,5 +1,15 @@
 ![Gokin](https://minio.ginkida.dev/minion/github/gokin.jpg)
 
+<p align="center">
+  <a href="https://github.com/ginkida/gokin/releases"><img src="https://img.shields.io/github/v/release/ginkida/gokin" alt="Release"></a>
+  <a href="https://github.com/ginkida/gokin/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ginkida/gokin" alt="License"></a>
+  <img src="https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go" alt="Go Version">
+</p>
+
+<p align="center">
+  <img src="https://minio.ginkida.dev/minion/github/Gokin-cli.gif" alt="Gokin Demo" width="800">
+</p>
+
 ---
 
 ## Why Gokin?
