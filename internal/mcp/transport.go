@@ -262,7 +262,7 @@ func (t *StdioTransport) Close() error {
 		// Kill if it doesn't exit in time
 		logging.Warn("MCP server not responding, killing process")
 		if t.cmd.Process != nil {
-			_ = t.cmd.Process.Kill()
+			t.cmd.Process.Kill()
 		}
 		<-done
 	}
