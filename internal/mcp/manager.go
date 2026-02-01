@@ -1,0 +1,342 @@
+package mcp
+
+import (
+	"context"
+	"fmt"
+	"sync"
+
+	"gokin/internal/logging"
+	"gokin/internal/tools"
+)
+
+// Manager manages multiple MCP server connections.
+type Manager struct {
+	servers map[string]*ServerConfig // Server configurations
+	clients map[string]*Client       // Active client connections
+	tools   []tools.Tool             // All registered tools from all servers
+	mu      sync.RWMutex
+}
+
+// NewManager creates a new MCP manager.
+func NewManager(servers []*ServerConfig) *Manager {
+	m := &Manager{
+		servers: make(map[string]*ServerConfig),
+		clients: make(map[string]*Client),
+		tools:   make([]tools.Tool, 0),
+	}
+
+	for _, cfg := range servers {
+		m.servers[cfg.Name] = cfg
+	}
+
+	return m
+}
+
+// ConnectAll connects to all servers configured for auto-connect.
+func (m *Manager) ConnectAll(ctx context.Context) error {
+	var errs []error
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for name, cfg := range m.servers {
+		if !cfg.AutoConnect {
+			logging.Debug("MCP server skipped (auto_connect=false)", "name", name)
+			continue
+		}
+
+		if err := m.connectServer(ctx, cfg); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+			continue
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("connection errors: %v", errs)
+	}
+
+	return nil
+}
+
+// connectServer connects to a single server and registers its tools.
+// Must be called with m.mu held.
+func (m *Manager) connectServer(ctx context.Context, cfg *ServerConfig) error {
+	// Create client
+	client, err := NewClient(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to create client: %w", err)
+	}
+
+	// Initialize connection
+	if err := client.Initialize(ctx); err != nil {
+		client.Close()
+		return fmt.Errorf("initialization failed: %w", err)
+	}
+
+	// List tools
+	mcpTools, err := client.ListTools(ctx)
+	if err != nil {
+		client.Close()
+		return fmt.Errorf("failed to list tools: %w", err)
+	}
+
+	// Store client
+	m.clients[cfg.Name] = client
+
+	// Create tool wrappers
+	for _, t := range mcpTools {
+		tool := NewMCPTool(client, cfg.Name, cfg.ToolPrefix, t)
+		m.tools = append(m.tools, tool)
+	}
+
+	logging.Info("MCP server connected",
+		"name", cfg.Name,
+		"tools", len(mcpTools))
+
+	return nil
+}
+
+// Connect connects to a specific server by name.
+func (m *Manager) Connect(ctx context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cfg, exists := m.servers[name]
+	if !exists {
+		return fmt.Errorf("unknown server: %s", name)
+	}
+
+	// Check if already connected
+	if _, connected := m.clients[name]; connected {
+		return nil
+	}
+
+	return m.connectServer(ctx, cfg)
+}
+
+// Disconnect disconnects from a specific server.
+func (m *Manager) Disconnect(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	client, exists := m.clients[name]
+	if !exists {
+		return nil
+	}
+
+	// Remove tools from this server
+	newTools := make([]tools.Tool, 0, len(m.tools))
+	for _, t := range m.tools {
+		if mcpTool, ok := t.(*MCPTool); ok {
+			if mcpTool.GetServerName() != name {
+				newTools = append(newTools, t)
+			}
+		} else {
+			newTools = append(newTools, t)
+		}
+	}
+	m.tools = newTools
+
+	// Close client
+	delete(m.clients, name)
+	if err := client.Close(); err != nil {
+		return fmt.Errorf("failed to close client: %w", err)
+	}
+
+	logging.Info("MCP server disconnected", "name", name)
+	return nil
+}
+
+// GetTools returns all tools from all connected servers.
+func (m *Manager) GetTools() []tools.Tool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make([]tools.Tool, len(m.tools))
+	copy(result, m.tools)
+	return result
+}
+
+// GetClient returns the client for a specific server.
+func (m *Manager) GetClient(name string) (*Client, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	client, ok := m.clients[name]
+	return client, ok
+}
+
+// GetConnectedServers returns the names of all connected servers.
+func (m *Manager) GetConnectedServers() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	names := make([]string, 0, len(m.clients))
+	for name := range m.clients {
+		names = append(names, name)
+	}
+	return names
+}
+
+// GetServerConfig returns the configuration for a server.
+func (m *Manager) GetServerConfig(name string) (*ServerConfig, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	cfg, ok := m.servers[name]
+	return cfg, ok
+}
+
+// GetAllServerConfigs returns all server configurations.
+func (m *Manager) GetAllServerConfigs() []*ServerConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	configs := make([]*ServerConfig, 0, len(m.servers))
+	for _, cfg := range m.servers {
+		configs = append(configs, cfg)
+	}
+	return configs
+}
+
+// AddServer adds a new server configuration.
+func (m *Manager) AddServer(cfg *ServerConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.servers[cfg.Name]; exists {
+		return fmt.Errorf("server already exists: %s", cfg.Name)
+	}
+
+	m.servers[cfg.Name] = cfg
+	return nil
+}
+
+// RemoveServer removes a server configuration and disconnects if connected.
+func (m *Manager) RemoveServer(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Disconnect if connected
+	if client, exists := m.clients[name]; exists {
+		client.Close()
+		delete(m.clients, name)
+	}
+
+	// Remove configuration
+	delete(m.servers, name)
+	return nil
+}
+
+// Shutdown disconnects from all servers.
+func (m *Manager) Shutdown(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var lastErr error
+	for name, client := range m.clients {
+		if err := client.Close(); err != nil {
+			logging.Warn("MCP client close error", "name", name, "error", err)
+			lastErr = err
+		}
+	}
+
+	m.clients = make(map[string]*Client)
+	m.tools = nil
+
+	logging.Debug("MCP manager shutdown complete")
+	return lastErr
+}
+
+// ServerStatus contains status information about an MCP server.
+type ServerStatus struct {
+	Name        string
+	Connected   bool
+	ServerInfo  *ServerInfo
+	ToolCount   int
+	ToolNames   []string
+}
+
+// GetServerStatus returns status information for all servers.
+func (m *Manager) GetServerStatus() []*ServerStatus {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	statuses := make([]*ServerStatus, 0, len(m.servers))
+
+	for name, cfg := range m.servers {
+		status := &ServerStatus{
+			Name:      name,
+			Connected: false,
+		}
+
+		if client, ok := m.clients[name]; ok {
+			status.Connected = true
+			status.ServerInfo = client.GetServerInfo()
+
+			// Count tools from this server
+			for _, t := range m.tools {
+				if mcpTool, ok := t.(*MCPTool); ok {
+					if mcpTool.GetServerName() == name {
+						status.ToolCount++
+						status.ToolNames = append(status.ToolNames, mcpTool.Name())
+					}
+				}
+			}
+		}
+
+		// Use config name if server info not available
+		if status.ServerInfo == nil {
+			status.ServerInfo = &ServerInfo{Name: cfg.Name}
+		}
+
+		statuses = append(statuses, status)
+	}
+
+	return statuses
+}
+
+// RefreshTools refreshes the tool list from a specific server.
+func (m *Manager) RefreshTools(ctx context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	client, exists := m.clients[name]
+	if !exists {
+		return fmt.Errorf("server not connected: %s", name)
+	}
+
+	cfg, exists := m.servers[name]
+	if !exists {
+		return fmt.Errorf("server config not found: %s", name)
+	}
+
+	// Get updated tool list
+	mcpTools, err := client.ListTools(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list tools: %w", err)
+	}
+
+	// Remove old tools from this server
+	newTools := make([]tools.Tool, 0, len(m.tools))
+	for _, t := range m.tools {
+		if mcpTool, ok := t.(*MCPTool); ok {
+			if mcpTool.GetServerName() != name {
+				newTools = append(newTools, t)
+			}
+		} else {
+			newTools = append(newTools, t)
+		}
+	}
+
+	// Add updated tools
+	for _, t := range mcpTools {
+		tool := NewMCPTool(client, name, cfg.ToolPrefix, t)
+		newTools = append(newTools, tool)
+	}
+
+	m.tools = newTools
+
+	logging.Debug("MCP tools refreshed", "name", name, "tools", len(mcpTools))
+	return nil
+}

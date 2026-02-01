@@ -3,7 +3,6 @@ module gokin
 go 1.25.6
 
 require (
-	cloud.google.com/go/auth v0.9.3
 	github.com/alecthomas/chroma/v2 v2.23.0
 	github.com/atotto/clipboard v0.1.4
 	github.com/bmatcuk/doublestar/v4 v4.9.2
@@ -24,6 +23,7 @@ require (
 
 require (
 	cloud.google.com/go v0.116.0 // indirect
+	cloud.google.com/go/auth v0.9.3 // indirect
 	cloud.google.com/go/compute/metadata v0.5.0 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect

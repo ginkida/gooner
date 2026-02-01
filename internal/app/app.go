@@ -20,6 +20,7 @@ import (
 	"gokin/internal/contract"
 	"gokin/internal/hooks"
 	"gokin/internal/logging"
+	"gokin/internal/mcp"
 	"gokin/internal/permission"
 	"gokin/internal/plan"
 	"gokin/internal/ratelimit"
@@ -182,6 +183,9 @@ type App struct {
 	// === PHASE 6: Tree Planner ===
 	treePlanner         *agent.TreePlanner // Tree-based planning
 	planningModeEnabled bool               // toggle for planning mode
+
+	// MCP (Model Context Protocol)
+	mcpManager *mcp.Manager
 
 	// Streaming token estimation
 	streamedChars int // Accumulated chars during current streaming session

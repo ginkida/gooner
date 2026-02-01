@@ -21,6 +21,7 @@ import (
 	"gokin/internal/git"
 	"gokin/internal/hooks"
 	"gokin/internal/logging"
+	"gokin/internal/mcp"
 	"gokin/internal/memory"
 	"gokin/internal/permission"
 	"gokin/internal/plan"
@@ -95,6 +96,9 @@ type Builder struct {
 
 	// Session persistence
 	sessionManager *chat.SessionManager
+
+	// MCP (Model Context Protocol)
+	mcpManager *mcp.Manager
 
 	// For error collection during build
 	buildErrors []error
@@ -824,6 +828,51 @@ func (b *Builder) initIntegrations() error {
 		}
 	}
 
+	// Initialize MCP (Model Context Protocol)
+	if b.cfg.MCP.Enabled && len(b.cfg.MCP.Servers) > 0 {
+		// Convert config to MCP server configs
+		mcpConfigs := make([]*mcp.ServerConfig, 0, len(b.cfg.MCP.Servers))
+		for _, s := range b.cfg.MCP.Servers {
+			mcpConfigs = append(mcpConfigs, &mcp.ServerConfig{
+				Name:        s.Name,
+				Transport:   s.Transport,
+				Command:     s.Command,
+				Args:        s.Args,
+				Env:         s.Env,
+				URL:         s.URL,
+				Headers:     s.Headers,
+				AutoConnect: s.AutoConnect,
+				Timeout:     s.Timeout,
+				MaxRetries:  s.MaxRetries,
+				RetryDelay:  s.RetryDelay,
+				ToolPrefix:  s.ToolPrefix,
+			})
+		}
+
+		b.mcpManager = mcp.NewManager(mcpConfigs)
+
+		// Connect to auto-connect servers
+		if err := b.mcpManager.ConnectAll(b.ctx); err != nil {
+			logging.Warn("some MCP servers failed to connect", "error", err)
+			// Continue - graceful degradation
+		}
+
+		// Register MCP tools into the registry
+		for _, tool := range b.mcpManager.GetTools() {
+			if err := b.registry.Register(tool); err != nil {
+				logging.Warn("failed to register MCP tool",
+					"tool", tool.Name(), "error", err)
+			}
+		}
+
+		// Refresh tools on client
+		b.geminiClient.SetTools(b.registry.GeminiTools())
+
+		logging.Debug("MCP initialized",
+			"servers", len(b.cfg.MCP.Servers),
+			"tools", len(b.mcpManager.GetTools()))
+	}
+
 	return nil
 }
 
@@ -1092,6 +1141,8 @@ func (b *Builder) assembleApp() *App {
 		metaAgent:         b.metaAgent,
 		// Phase 6: Tree Planner
 		treePlanner: b.treePlanner,
+		// MCP (Model Context Protocol)
+		mcpManager: b.mcpManager,
 	}
 
 	return b.cachedApp

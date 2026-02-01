@@ -63,7 +63,8 @@ Gokin (GLM-4 / Gemini Flash 3)   →     Claude Code (Claude Opus 4.5)
 - **Sessions** — Save and restore conversation state
 - **Undo/Redo** — Revert file changes
 
-### Customization
+### Extensibility
+- **MCP Support** — Connect to external MCP servers for additional tools
 - **Permission System** — Control which operations require approval
 - **Hooks** — Automate actions (pre/post tool, on error, on start/exit)
 - **Themes** — Light and dark mode
@@ -422,6 +423,84 @@ export GEMINI_API_KEY="your-api-key"
 # Or for GLM
 export GLM_API_KEY="your-api-key"
 ```
+
+## MCP (Model Context Protocol)
+
+Gokin supports [MCP](https://modelcontextprotocol.io/) — a protocol for connecting AI assistants to external tools and data sources. This allows you to extend Gokin with tools from MCP servers.
+
+### Configuration
+
+Add MCP servers to `~/.config/gokin/config.yaml`:
+
+```yaml
+mcp:
+  enabled: true
+  servers:
+    # GitHub integration
+    - name: github
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      env:
+        GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
+      auto_connect: true
+      timeout: 30s
+
+    # Filesystem access
+    - name: filesystem
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"]
+      auto_connect: true
+
+    # Brave Search
+    - name: brave-search
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-brave-search"]
+      env:
+        BRAVE_API_KEY: "${BRAVE_API_KEY}"
+      auto_connect: true
+```
+
+### Server Configuration Options
+
+| Option | Description |
+|--------|-------------|
+| `name` | Unique server identifier |
+| `transport` | Transport type: `stdio` or `http` |
+| `command` | Command to start the server (for stdio) |
+| `args` | Command arguments |
+| `env` | Environment variables (supports `${VAR}` expansion) |
+| `url` | Server URL (for http transport) |
+| `auto_connect` | Connect automatically on startup |
+| `timeout` | Request timeout |
+| `tool_prefix` | Prefix for tool names (default: server name) |
+
+### How It Works
+
+1. **Startup**: Gokin connects to configured MCP servers
+2. **Tool Discovery**: Server tools are registered as Gokin tools
+3. **Execution**: When AI uses an MCP tool, Gokin forwards the call to the server
+4. **Response**: Results are returned to AI
+
+### Security
+
+- **Environment Isolation**: MCP servers run with sanitized environment (no API keys leaked)
+- **Secret Expansion**: Use `${VAR}` syntax to inject secrets from environment
+- **Permission System**: MCP tools go through Gokin's permission system
+
+### Popular MCP Servers
+
+| Server | Package | Description |
+|--------|---------|-------------|
+| GitHub | `@modelcontextprotocol/server-github` | GitHub API integration |
+| Filesystem | `@modelcontextprotocol/server-filesystem` | File system access |
+| Brave Search | `@modelcontextprotocol/server-brave-search` | Web search |
+| Puppeteer | `@modelcontextprotocol/server-puppeteer` | Browser automation |
+| Slack | `@modelcontextprotocol/server-slack` | Slack integration |
+
+Find more servers at: https://github.com/modelcontextprotocol/servers
 
 ## Security
 
@@ -790,7 +869,12 @@ gokin/
 │   │   └── shared_memory.go # Inter-agent memory
 │   ├── client/              # AI providers
 │   │   ├── gemini.go        # Google Gemini
-│   │   └── glm.go           # GLM-4
+│   │   └── anthropic.go     # GLM-4 (Anthropic-compatible)
+│   ├── mcp/                 # MCP (Model Context Protocol)
+│   │   ├── client.go        # MCP client
+│   │   ├── transport.go     # Stdio/HTTP transports
+│   │   ├── manager.go       # Multi-server management
+│   │   └── tool.go          # MCP tool wrapper
 │   ├── tools/               # 40+ AI tools
 │   │   ├── read.go, write.go, edit.go
 │   │   ├── bash.go, grep.go, glob.go

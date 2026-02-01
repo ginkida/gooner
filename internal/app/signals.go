@@ -157,6 +157,14 @@ func (a *App) gracefulShutdown(ctx context.Context) {
 		a.taskManager.CancelAll()
 	}
 
+	// 5. Shutdown MCP servers
+	if a.mcpManager != nil {
+		logging.Debug("shutting down MCP servers")
+		if err := a.mcpManager.Shutdown(ctx); err != nil {
+			logging.Debug("error shutting down MCP", "error", err)
+		}
+	}
+
 	// 6. Stop file watcher
 	if a.fileWatcher != nil {
 		logging.Debug("stopping file watcher")

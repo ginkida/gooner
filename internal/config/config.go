@@ -23,6 +23,7 @@ type Config struct {
 	DiffPreview DiffPreviewConfig `yaml:"diff_preview"`
 	Semantic    SemanticConfig    `yaml:"semantic"`
 	Contract    ContractConfig    `yaml:"contract"`
+	MCP         MCPConfig         `yaml:"mcp"`
 }
 
 // APIConfig holds API-related settings.
@@ -280,6 +281,28 @@ type ContractConfig struct {
 	InjectContext   bool          `yaml:"inject_context"`   // Inject active contract into context
 }
 
+// MCPConfig holds MCP (Model Context Protocol) settings.
+type MCPConfig struct {
+	Enabled bool              `yaml:"enabled"` // Enable/disable MCP support
+	Servers []MCPServerConfig `yaml:"servers"` // MCP server configurations
+}
+
+// MCPServerConfig holds configuration for a single MCP server.
+type MCPServerConfig struct {
+	Name        string            `yaml:"name"`                   // Unique identifier
+	Transport   string            `yaml:"transport"`              // "stdio" or "http"
+	Command     string            `yaml:"command,omitempty"`      // For stdio: command to run
+	Args        []string          `yaml:"args,omitempty"`         // For stdio: command arguments
+	Env         map[string]string `yaml:"env,omitempty"`          // Additional env vars (supports ${VAR})
+	URL         string            `yaml:"url,omitempty"`          // For http: server URL
+	Headers     map[string]string `yaml:"headers,omitempty"`      // For http: custom headers
+	AutoConnect bool              `yaml:"auto_connect"`           // Connect on startup
+	Timeout     time.Duration     `yaml:"timeout,omitempty"`      // Request timeout
+	MaxRetries  int               `yaml:"max_retries,omitempty"`  // Retry count
+	RetryDelay  time.Duration     `yaml:"retry_delay,omitempty"`  // Between retries
+	ToolPrefix  string            `yaml:"tool_prefix,omitempty"`  // Prefix for tool names
+}
+
 // DefaultConfig returns the default configuration.
 func DefaultConfig() *Config {
 	return &Config{
@@ -421,6 +444,10 @@ func DefaultConfig() *Config {
 			VerifyTimeout:   2 * time.Minute,
 			StorePath:       ".gokin/contracts/",
 			InjectContext:   true,
+		},
+		MCP: MCPConfig{
+			Enabled: false, // Disabled by default
+			Servers: []MCPServerConfig{},
 		},
 	}
 }
