@@ -46,8 +46,8 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: v1.65
-          install-mode: binary
+          version: v1.64.8
+          install-mode: goinstall
 
   build:
     runs-on: ubuntu-latest
