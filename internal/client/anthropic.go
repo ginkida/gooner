@@ -66,12 +66,6 @@ type AnthropicClient struct {
 	mu          sync.RWMutex
 }
 
-// RateLimiter interface for rate limiting (optional).
-type RateLimiter interface {
-	AcquireWithContext(ctx context.Context, tokens int64) error
-	ReturnTokens(requests int, tokens int64)
-}
-
 // NewAnthropicClient creates a new Anthropic-compatible client.
 func NewAnthropicClient(config AnthropicConfig) (*AnthropicClient, error) {
 	// Validate required fields

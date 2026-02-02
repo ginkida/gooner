@@ -144,6 +144,25 @@ func GetGLMKey(configGLMKey, configLegacyKey string) *LoadedKey {
 	return GetAPIKey(envVars, configValue, "")
 }
 
+// GetOllamaKey loads the optional Ollama API key from environment or config.
+// Note: Ollama doesn't require an API key for local servers,
+// but remote Ollama servers may require authentication.
+//
+// Environment variables checked (in priority order):
+//   - GOKIN_OLLAMA_KEY (recommended, explicit)
+//   - OLLAMA_API_KEY (generic)
+//
+// Config fallback:
+//   - api.ollama_key
+func GetOllamaKey(configOllamaKey string) *LoadedKey {
+	envVars := []string{
+		"GOKIN_OLLAMA_KEY", // Preferred, explicit
+		"OLLAMA_API_KEY",   // Generic Ollama
+	}
+
+	return GetAPIKey(envVars, configOllamaKey, "")
+}
+
 // MaskKey masks an API key for safe logging/display
 // Shows first 4 and last 4 characters with asterisks in between
 //

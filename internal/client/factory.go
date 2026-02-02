@@ -44,6 +44,8 @@ func NewClient(ctx context.Context, cfg *config.Config, modelID string) (Client,
 		return NewGeminiClient(ctx, cfg)
 	case "anthropic":
 		return newAnthropicClientForModelID(cfg, modelID)
+	case "ollama":
+		return newOllamaClient(cfg, modelID)
 	default:
 		// Fallback to auto-detection from model name
 		logging.Debug("unknown provider, auto-detecting from model name", "modelID", modelID)
@@ -56,6 +58,19 @@ func NewClient(ctx context.Context, cfg *config.Config, modelID string) (Client,
 		// Check Claude models
 		if strings.HasPrefix(modelID, "claude") {
 			return newAnthropicClientForModelID(cfg, modelID)
+		}
+
+		// Check common open-source model prefixes (typically run via Ollama)
+		ollamaPrefixes := []string{
+			"llama", "qwen", "deepseek", "codellama", "mistral", "phi", "gemma",
+			"vicuna", "yi", "starcoder", "wizardcoder", "orca", "neural", "solar",
+			"openchat", "zephyr", "dolphin", "nous", "tinyllama", "stablelm",
+		}
+		modelLower := strings.ToLower(modelID)
+		for _, prefix := range ollamaPrefixes {
+			if strings.HasPrefix(modelLower, prefix) {
+				return newOllamaClient(cfg, modelID)
+			}
 		}
 
 		// Default to Gemini
@@ -166,4 +181,36 @@ func newAnthropicClientForModelID(cfg *config.Config, modelID string) (Client, e
 	}
 
 	return newAnthropicClientForModel(cfg, modelInfo)
+}
+
+// newOllamaClient creates an Ollama client for local LLM inference.
+func newOllamaClient(cfg *config.Config, modelID string) (Client, error) {
+	// Load optional API key (for remote Ollama servers with auth)
+	loadedKey := security.GetOllamaKey(cfg.API.OllamaKey)
+
+	// Log key source for debugging (without exposing the key)
+	if loadedKey.IsSet() {
+		logging.Debug("loaded Ollama API key",
+			"source", loadedKey.Source,
+			"model", modelID)
+	}
+
+	// Use custom base URL if provided, otherwise use default
+	baseURL := cfg.API.OllamaBaseURL
+	if baseURL == "" {
+		baseURL = "http://localhost:11434"
+	}
+
+	ollamaConfig := OllamaConfig{
+		BaseURL:     baseURL,
+		APIKey:      loadedKey.Value, // Optional
+		Model:       modelID,
+		Temperature: cfg.Model.Temperature,
+		MaxTokens:   cfg.Model.MaxOutputTokens,
+		HTTPTimeout: cfg.API.Retry.HTTPTimeout,
+		MaxRetries:  cfg.API.Retry.MaxRetries,
+		RetryDelay:  cfg.API.Retry.RetryDelay,
+	}
+
+	return NewOllamaClient(ollamaConfig)
 }

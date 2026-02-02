@@ -34,11 +34,15 @@ type APIConfig struct {
 	// Separate keys for each provider
 	GeminiKey string `yaml:"gemini_key,omitempty"`
 	GLMKey    string `yaml:"glm_key,omitempty"`
+	OllamaKey string `yaml:"ollama_key,omitempty"` // Optional, for remote Ollama servers with auth
 
-	// Active provider: gemini, glm (default: gemini)
+	// Ollama server URL (default: http://localhost:11434)
+	OllamaBaseURL string `yaml:"ollama_base_url,omitempty"`
+
+	// Active provider: gemini, glm, ollama (default: gemini)
 	ActiveProvider string `yaml:"active_provider"`
 
-	// Backend: gemini, glm, auto (default: gemini) - legacy, use ActiveProvider
+	// Backend: gemini, glm, ollama, auto (default: gemini) - legacy, use ActiveProvider
 	Backend string `yaml:"backend,omitempty"`
 
 	// Retry configuration for API calls
@@ -64,6 +68,9 @@ func (c *APIConfig) GetActiveKey() string {
 		if c.GeminiKey != "" {
 			return c.GeminiKey
 		}
+	case "ollama":
+		// Ollama key is optional (local server doesn't need it)
+		return c.OllamaKey
 	}
 
 	// Fallback to legacy APIKey field
@@ -82,12 +89,16 @@ func (c *APIConfig) GetActiveProvider() string {
 }
 
 // HasProvider checks if a provider has an API key configured.
+// Note: Ollama doesn't require an API key for local servers.
 func (c *APIConfig) HasProvider(provider string) bool {
 	switch provider {
 	case "gemini":
 		return c.GeminiKey != "" || (c.APIKey != "" && c.GetActiveProvider() == "gemini")
 	case "glm":
 		return c.GLMKey != "" || (c.APIKey != "" && c.GetActiveProvider() == "glm")
+	case "ollama":
+		// Ollama is always "available" since it doesn't require an API key
+		return true
 	}
 	return false
 }
@@ -99,6 +110,8 @@ func (c *APIConfig) SetProviderKey(provider, key string) {
 		c.GeminiKey = key
 	case "glm":
 		c.GLMKey = key
+	case "ollama":
+		c.OllamaKey = key
 	}
 }
 

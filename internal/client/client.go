@@ -38,6 +38,13 @@ var AvailableModels = []ModelInfo{
 		Provider:    "glm",
 		BaseURL:     "https://api.z.ai/api/anthropic",
 	},
+	// Ollama (local models - use exact name from 'ollama list')
+	{
+		ID:          "ollama",
+		Name:        "Ollama (Local)",
+		Description: "Local LLM. Use --model <name> from 'ollama list'",
+		Provider:    "ollama",
+	},
 }
 
 // GetModelsForProvider returns models filtered by provider.
@@ -105,6 +112,12 @@ type Client interface {
 
 	// Close closes the client connection.
 	Close() error
+}
+
+// RateLimiter interface for rate limiting API calls (optional).
+type RateLimiter interface {
+	AcquireWithContext(ctx context.Context, tokens int64) error
+	ReturnTokens(requests int, tokens int64)
 }
 
 // StreamingResponse represents a streaming response from the model.

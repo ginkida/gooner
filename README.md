@@ -34,6 +34,7 @@ Gokin (GLM-4 / Gemini Flash 3)   →     Claude Code (Claude Opus 4.5)
 
 | Tool | Cost | Best For |
 |------|------|----------|
+| Gokin + Ollama | Free (local) | Privacy-focused, offline development |
 | Gokin + GLM-4 | ~$3/month | Initial development, bulk operations |
 | Gokin + Gemini Flash 3 | Free tier available | Fast iterations, prototyping |
 | Claude Code | ~$100/month | Final polish, complex reasoning |
@@ -50,6 +51,7 @@ Gokin (GLM-4 / Gemini Flash 3)   →     Claude Code (Claude Opus 4.5)
 ### AI Providers
 - **Google Gemini** — Gemini 3 Pro/Flash, free tier available
 - **GLM-4** — Cost-effective Chinese model (~$3/month)
+- **Ollama** — Local LLMs (Llama, Qwen, DeepSeek, CodeLlama), free & private
 
 ### Intelligence
 - **Multi-Agent System** — Specialized agents (Explore, Bash, Plan, General)
@@ -95,7 +97,10 @@ sudo mv gokin /usr/local/bin/
 ### Requirements
 
 - Go 1.23+
-- Google Gemini API key or Google account (OAuth)
+- One of:
+  - Google Gemini API key (free tier available)
+  - GLM-4 API key
+  - Ollama installed locally (no API key needed)
 
 ## Quick Start
 
@@ -138,6 +143,7 @@ gokin
 |----------|--------|------|----------|
 | **Gemini** | gemini-3-flash-preview, gemini-3-pro-preview | Free tier + paid | Fast iterations, prototyping |
 | **GLM** | glm-4.7 | ~$3/month | Budget-friendly development |
+| **Ollama** | Any model from `ollama list` | Free (local) | Privacy, offline, custom models |
 
 ### Model Presets
 
@@ -151,14 +157,110 @@ gokin
 
 ```bash
 # Via environment
-export GOKIN_BACKEND="gemini"   # or "glm"
+export GOKIN_BACKEND="gemini"   # or "glm" or "ollama"
 
 # Via config.yaml
 model:
   provider: "gemini"
   name: "gemini-3-flash-preview"
   preset: "fast"  # or use preset instead
+
+# For Ollama (local)
+model:
+  provider: "ollama"
+  name: "llama3.2"  # Use exact name from 'ollama list'
 ```
+
+### Using Ollama
+
+Ollama allows you to run LLMs locally without any API keys or internet connection.
+
+```bash
+# 1. Install Ollama (https://ollama.ai)
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# 2. Start Ollama server
+ollama serve
+
+# 3. Pull a model (see https://ollama.ai/library for available models)
+ollama pull llama3.2          # Meta's Llama 3.2
+ollama pull qwen2.5-coder     # Alibaba's coding model
+ollama pull deepseek-coder-v2 # DeepSeek coding model
+ollama pull codellama         # Meta's Code Llama
+ollama pull mistral           # Mistral 7B
+
+# 4. List installed models
+ollama list
+
+# 5. Run Gokin with Ollama
+gokin --model llama3.2
+# or set in config.yaml
+```
+
+#### Finding Models
+
+Use the exact model name from `ollama list`:
+
+```bash
+$ ollama list
+NAME                    SIZE
+llama3.2:latest         2.0 GB
+qwen2.5-coder:7b        4.7 GB
+deepseek-coder-v2:16b   8.9 GB
+```
+
+Then use it in Gokin:
+```bash
+gokin --model llama3.2
+gokin --model qwen2.5-coder:7b
+gokin --model deepseek-coder-v2:16b
+```
+
+> **Note:** Tool calling support varies by model. Models like Llama 3.1+, Qwen 2.5+, and Mistral have good tool support.
+
+#### Remote Ollama Server
+
+For remote Ollama servers (e.g., on a GPU server):
+
+```yaml
+# config.yaml
+api:
+  ollama_base_url: "http://gpu-server:11434"
+  ollama_key: "optional-api-key"  # If server requires auth
+```
+
+Or via environment:
+```bash
+export OLLAMA_HOST="http://gpu-server:11434"
+export OLLAMA_API_KEY="optional-api-key"
+```
+
+#### Ollama Cloud
+
+Use [Ollama Cloud](https://docs.ollama.com/cloud) to run models without local GPU:
+
+```bash
+# 1. Sign in to Ollama Cloud
+ollama signin
+
+# 2. Set your API key
+export OLLAMA_API_KEY="your_api_key"
+
+# 3. Run Gokin with cloud endpoint
+gokin --model llama3.2
+```
+
+Or configure in `config.yaml`:
+```yaml
+api:
+  ollama_base_url: "https://ollama.com"
+  ollama_key: "your_api_key"
+model:
+  provider: ollama
+  name: "llama3.2"
+```
+
+> **Note:** Ollama Cloud offloads processing to cloud servers — no local GPU required.
 
 ## Commands
 
@@ -220,7 +322,10 @@ All commands start with `/`:
 |---------|-------------|
 | `/login <api_key>` | Set Gemini API key |
 | `/login <api_key> --glm` | Set GLM API key |
+| `/login <api_key> --ollama` | Set Ollama API key (for remote servers) |
 | `/logout` | Remove saved API key |
+
+> **Note:** Ollama running locally doesn't require an API key. The `--ollama` flag is only needed for remote Ollama servers with authentication.
 
 ### Interface
 
@@ -319,7 +424,9 @@ Configuration is stored in `~/.config/gokin/config.yaml`:
 api:
   gemini_key: ""                 # Gemini API key (or via GEMINI_API_KEY)
   glm_key: ""                    # GLM API key (or via GLM_API_KEY)
-  backend: "gemini"              # gemini or glm
+  ollama_key: ""                 # Ollama API key (optional, for remote servers)
+  ollama_base_url: ""            # Ollama server URL (default: http://localhost:11434)
+  backend: "gemini"              # gemini, glm, or ollama
 
 model:
   name: "gemini-3-flash-preview" # Model name
@@ -409,8 +516,11 @@ logging:
 | `GOKIN_GEMINI_KEY` | Gemini API key (alternative) |
 | `GLM_API_KEY` | GLM API key |
 | `GOKIN_GLM_KEY` | GLM API key (alternative) |
+| `OLLAMA_API_KEY` | Ollama API key (for remote servers) |
+| `GOKIN_OLLAMA_KEY` | Ollama API key (alternative) |
+| `OLLAMA_HOST` | Ollama server URL (default: http://localhost:11434) |
 | `GOKIN_MODEL` | Model name (overrides config) |
-| `GOKIN_BACKEND` | Backend: gemini or glm |
+| `GOKIN_BACKEND` | Backend: gemini, glm, or ollama |
 
 ### Secure API Key Storage
 
@@ -869,7 +979,8 @@ gokin/
 │   │   └── shared_memory.go # Inter-agent memory
 │   ├── client/              # AI providers
 │   │   ├── gemini.go        # Google Gemini
-│   │   └── anthropic.go     # GLM-4 (Anthropic-compatible)
+│   │   ├── anthropic.go     # GLM-4 (Anthropic-compatible)
+│   │   └── ollama.go        # Ollama (local LLMs)
 │   ├── mcp/                 # MCP (Model Context Protocol)
 │   │   ├── client.go        # MCP client
 │   │   ├── transport.go     # Stdio/HTTP transports
