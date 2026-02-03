@@ -107,6 +107,10 @@ func (m *AgentMessenger) ReceiveResponse(ctx context.Context, messageID string) 
 	case <-ctx.Done():
 		return "", ctx.Err()
 	case <-time.After(5 * time.Minute):
+		// Cleanup on timeout to prevent goroutine leak
+		m.mu.Lock()
+		delete(m.pending, messageID)
+		m.mu.Unlock()
 		return "", fmt.Errorf("timeout waiting for response to message %s", messageID)
 	}
 }

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -35,6 +36,7 @@ func (t *Toast) IsExpired() bool {
 
 // ToastManager manages toast notifications.
 type ToastManager struct {
+	mu        sync.Mutex
 	toasts    []Toast
 	maxToasts int
 	styles    *Styles
@@ -53,6 +55,9 @@ func NewToastManager(styles *Styles) *ToastManager {
 
 // Show displays a new toast notification.
 func (m *ToastManager) Show(toastType ToastType, title, message string, duration time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	toast := Toast{
 		ID:        m.nextID,
 		Type:      toastType,
@@ -95,6 +100,9 @@ func (m *ToastManager) ShowWarning(message string) {
 
 // Dismiss removes a toast by ID.
 func (m *ToastManager) Dismiss(id int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	for i, toast := range m.toasts {
 		if toast.ID == id {
 			m.toasts = append(m.toasts[:i], m.toasts[i+1:]...)
@@ -105,6 +113,9 @@ func (m *ToastManager) Dismiss(id int) {
 
 // Update removes expired toasts.
 func (m *ToastManager) Update() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	var active []Toast
 	for _, toast := range m.toasts {
 		if !toast.IsExpired() {
@@ -116,11 +127,16 @@ func (m *ToastManager) Update() {
 
 // Count returns the number of active toasts.
 func (m *ToastManager) Count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return len(m.toasts)
 }
 
 // View renders all active toasts in the right upper corner.
 func (m *ToastManager) View(width int) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if len(m.toasts) == 0 {
 		return ""
 	}
@@ -224,5 +240,7 @@ func (m *ToastManager) renderToast(toast Toast, width int) string {
 
 // Clear removes all toasts.
 func (m *ToastManager) Clear() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.toasts = m.toasts[:0]
 }

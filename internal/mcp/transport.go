@@ -2,10 +2,12 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -333,9 +335,68 @@ func (t *HTTPTransport) Send(msg *JSONRPCMessage) error {
 	// Ensure JSONRPC version is set
 	msg.JSONRPC = "2.0"
 
-	// TODO: Implement HTTP POST to MCP server
-	// For now, return an error indicating HTTP transport is not fully implemented
-	return fmt.Errorf("HTTP transport not fully implemented yet")
+	// Serialize message
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message: %w", err)
+	}
+
+	// Create request with timeout
+	ctx, cancel := context.WithTimeout(t.ctx, t.timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", t.url, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range t.headers {
+		req.Header.Set(k, v)
+	}
+
+	// Send request
+	client := &http.Client{Timeout: t.timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check status
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("HTTP error %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse response (if any)
+	if resp.ContentLength > 0 || resp.ContentLength == -1 {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("failed to read response body: %w", err)
+		}
+
+		if len(body) > 0 {
+			var response JSONRPCMessage
+			if err := json.Unmarshal(body, &response); err != nil {
+				return fmt.Errorf("failed to decode response: %w", err)
+			}
+
+			// Send response to receive channel
+			select {
+			case t.recvChan <- &response:
+			case <-t.ctx.Done():
+				return t.ctx.Err()
+			}
+		}
+	}
+
+	logging.Debug("MCP HTTP message sent",
+		"method", msg.Method,
+		"id", msg.ID)
+
+	return nil
 }
 
 // Receive receives a JSON-RPC message from the server.

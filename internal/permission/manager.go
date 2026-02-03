@@ -216,6 +216,20 @@ func (m *Manager) rememberKey(key string, decision Decision) {
 func (m *Manager) Remember(toolName string, decision Decision) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// Evict old entries if cache is at capacity
+	if len(m.sessionCache) >= m.maxCacheEntries {
+		evictCount := m.maxCacheEntries / 4
+		count := 0
+		for k := range m.sessionCache {
+			if count >= evictCount {
+				break
+			}
+			delete(m.sessionCache, k)
+			count++
+		}
+	}
+
 	m.sessionCache[toolName] = decision
 }
 

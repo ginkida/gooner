@@ -133,6 +133,11 @@ func (b *Builder) Build() (*App, error) {
 		b.addError(err)
 		return nil, b.finalizeError()
 	}
+	// Validate Ollama model availability (auto-pull if missing)
+	if err := b.validateOllamaModel(); err != nil {
+		b.addError(err)
+		return nil, b.finalizeError()
+	}
 	if err := b.initTools(); err != nil {
 		b.addError(err)
 	}
@@ -238,6 +243,69 @@ func (b *Builder) checkAllowedDirs() error {
 		fmt.Printf("   Directory already in allowed list.\n\n")
 	}
 
+	return nil
+}
+
+// validateOllamaModel checks if the configured model is available.
+// Called only when backend is "ollama".
+func (b *Builder) validateOllamaModel() error {
+	// Skip if not Ollama backend
+	if b.cfg.API.Backend != "ollama" {
+		return nil
+	}
+
+	ollamaClient, ok := b.geminiClient.(*client.OllamaClient)
+	if !ok {
+		return nil
+	}
+
+	modelName := b.cfg.Model.Name
+	ctx, cancel := context.WithTimeout(b.ctx, 10*time.Second)
+	defer cancel()
+
+	available, err := ollamaClient.IsModelAvailable(ctx, modelName)
+	if err != nil {
+		// Server unavailable — skip validation, error will appear later
+		logging.Debug("ollama healthcheck failed, skipping model validation", "error", err)
+		return nil
+	}
+
+	if available {
+		return nil
+	}
+
+	// Model not found — ask user
+	return b.promptModelPull(ollamaClient, modelName)
+}
+
+// promptModelPull asks user to download a missing model.
+func (b *Builder) promptModelPull(c *client.OllamaClient, modelName string) error {
+	fmt.Printf("\nModel '%s' is not installed.\n\n", modelName)
+	fmt.Printf("Would you like to download it now? [Y/n] ")
+
+	var response string
+	fmt.Scanln(&response)
+	response = strings.TrimSpace(strings.ToLower(response))
+
+	if response != "" && response != "y" && response != "yes" {
+		return fmt.Errorf("model '%s' is not available. Run: ollama pull %s", modelName, modelName)
+	}
+
+	fmt.Printf("\nDownloading %s...\n", modelName)
+
+	err := c.PullModel(b.ctx, modelName, func(p client.PullProgress) {
+		if p.Total > 0 {
+			fmt.Printf("\r  %s: %.1f%%    ", p.Status, p.Percent)
+		} else {
+			fmt.Printf("\r  %s...    ", p.Status)
+		}
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to download model: %w", err)
+	}
+
+	fmt.Printf("\n\nModel '%s' downloaded successfully!\n\n", modelName)
 	return nil
 }
 
@@ -590,6 +658,27 @@ func (b *Builder) initIntegrations() error {
 				tt.SetAllowedDirs(b.cfg.Tools.AllowedDirs)
 			}
 		}
+		// Set allowed directories for file operation tools
+		if copyTool, ok := b.registry.Get("copy"); ok {
+			if ct, ok := copyTool.(*tools.CopyTool); ok {
+				ct.SetAllowedDirs(b.cfg.Tools.AllowedDirs)
+			}
+		}
+		if moveTool, ok := b.registry.Get("move"); ok {
+			if mt, ok := moveTool.(*tools.MoveTool); ok {
+				mt.SetAllowedDirs(b.cfg.Tools.AllowedDirs)
+			}
+		}
+		if deleteTool, ok := b.registry.Get("delete"); ok {
+			if dt, ok := deleteTool.(*tools.DeleteTool); ok {
+				dt.SetAllowedDirs(b.cfg.Tools.AllowedDirs)
+			}
+		}
+		if mkdirTool, ok := b.registry.Get("mkdir"); ok {
+			if mt, ok := mkdirTool.(*tools.MkdirTool); ok {
+				mt.SetAllowedDirs(b.cfg.Tools.AllowedDirs)
+			}
+		}
 	}
 
 	// Wire up undo manager
@@ -611,6 +700,27 @@ func (b *Builder) initIntegrations() error {
 	if batchTool, ok := b.registry.Get("batch"); ok {
 		if bt, ok := batchTool.(*tools.BatchTool); ok {
 			bt.SetUndoManager(b.undoManager)
+		}
+	}
+	// Wire up undo manager for file operation tools
+	if copyTool, ok := b.registry.Get("copy"); ok {
+		if ct, ok := copyTool.(*tools.CopyTool); ok {
+			ct.SetUndoManager(b.undoManager)
+		}
+	}
+	if moveTool, ok := b.registry.Get("move"); ok {
+		if mt, ok := moveTool.(*tools.MoveTool); ok {
+			mt.SetUndoManager(b.undoManager)
+		}
+	}
+	if deleteTool, ok := b.registry.Get("delete"); ok {
+		if dt, ok := deleteTool.(*tools.DeleteTool); ok {
+			dt.SetUndoManager(b.undoManager)
+		}
+	}
+	if mkdirTool, ok := b.registry.Get("mkdir"); ok {
+		if mt, ok := mkdirTool.(*tools.MkdirTool); ok {
+			mt.SetUndoManager(b.undoManager)
 		}
 	}
 

@@ -120,6 +120,13 @@ func (m *ContextManager) onSessionChange(event chat.ChangeEvent) {
 	// Update token count asynchronously, but guard against overwriting
 	// a more recent update from the main flow (UpdateTokenCount).
 	go func() {
+		// Panic recovery to prevent goroutine crash
+		defer func() {
+			if r := recover(); r != nil {
+				logging.Error("panic in session change handler", "error", r)
+			}
+		}()
+
 		m.mu.RLock()
 		versionBefore := m.updateVersion
 		m.mu.RUnlock()

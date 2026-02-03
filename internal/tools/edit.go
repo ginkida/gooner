@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"google.golang.org/genai"
@@ -58,7 +59,7 @@ func (t *EditTool) Name() string {
 }
 
 func (t *EditTool) Description() string {
-	return "Performs exact string replacement in a file. The old_string must be unique in the file unless replace_all is true."
+	return "Performs string replacement in a file. The old_string must be unique in the file unless replace_all is true. Use regex=true to treat old_string as a regular expression."
 }
 
 func (t *EditTool) Declaration() *genai.FunctionDeclaration {
@@ -83,6 +84,10 @@ func (t *EditTool) Declaration() *genai.FunctionDeclaration {
 				"replace_all": {
 					Type:        genai.TypeBoolean,
 					Description: "If true, replace all occurrences. If false (default), old_string must be unique.",
+				},
+				"regex": {
+					Type:        genai.TypeBoolean,
+					Description: "If true, treat old_string as a regular expression pattern.",
 				},
 			},
 			Required: []string{"file_path", "old_string", "new_string"},
@@ -152,36 +157,88 @@ func (t *EditTool) Execute(ctx context.Context, args map[string]any) (ToolResult
 
 	content := string(data)
 	oldContent := data // Save for undo
+	useRegex := GetBoolDefault(args, "regex", false)
 
-	// Check occurrences
-	count := strings.Count(content, oldStr)
+	var newContent string
+	var count int
 
-	if count == 0 {
-		return NewErrorResult(fmt.Sprintf("old_string not found in file: %s", filePath)), nil
-	}
+	if useRegex {
+		// Regex mode
+		re, err := regexp.Compile(oldStr)
+		if err != nil {
+			return NewErrorResult(fmt.Sprintf("invalid regex pattern: %s", err)), nil
+		}
 
-	if count > 1 && !replaceAll {
-		// Find line numbers of occurrences for a more helpful error
-		lines := strings.Split(content, "\n")
-		var lineNums []string
-		for i, line := range lines {
-			if strings.Contains(line, oldStr) {
-				lineNums = append(lineNums, fmt.Sprintf("%d", i+1))
+		// Count matches
+		matches := re.FindAllStringIndex(content, -1)
+		count = len(matches)
+
+		if count == 0 {
+			return NewErrorResult(fmt.Sprintf("regex pattern not found in file: %s", filePath)), nil
+		}
+
+		if count > 1 && !replaceAll {
+			// Find line numbers of matches for a more helpful error
+			lines := strings.Split(content, "\n")
+			var lineNums []string
+			pos := 0
+			for i, line := range lines {
+				lineEnd := pos + len(line)
+				for _, match := range matches {
+					if match[0] >= pos && match[0] < lineEnd {
+						lineNums = append(lineNums, fmt.Sprintf("%d", i+1))
+						break
+					}
+				}
+				pos = lineEnd + 1 // +1 for newline
+			}
+			lineInfo := ""
+			if len(lineNums) > 0 {
+				lineInfo = fmt.Sprintf(" (lines: %s)", strings.Join(lineNums, ", "))
+			}
+			return NewErrorResult(fmt.Sprintf("regex pattern matches %d times in %s%s. Set replace_all=true to replace all.", count, filePath, lineInfo)), nil
+		}
+
+		// Perform regex replacement
+		if replaceAll {
+			newContent = re.ReplaceAllString(content, newStr)
+		} else {
+			// Replace first match only
+			loc := re.FindStringIndex(content)
+			if loc != nil {
+				newContent = content[:loc[0]] + re.ReplaceAllString(content[loc[0]:loc[1]], newStr) + content[loc[1]:]
 			}
 		}
-		lineInfo := ""
-		if len(lineNums) > 0 {
-			lineInfo = fmt.Sprintf(" (lines: %s)", strings.Join(lineNums, ", "))
-		}
-		return NewErrorResult(fmt.Sprintf("old_string appears %d times in %s%s. Provide more surrounding context to make it unique, or set replace_all=true.", count, filePath, lineInfo)), nil
-	}
-
-	// Perform replacement
-	var newContent string
-	if replaceAll {
-		newContent = strings.ReplaceAll(content, oldStr, newStr)
 	} else {
-		newContent = strings.Replace(content, oldStr, newStr, 1)
+		// Literal mode (existing behavior)
+		count = strings.Count(content, oldStr)
+
+		if count == 0 {
+			return NewErrorResult(fmt.Sprintf("old_string not found in file: %s", filePath)), nil
+		}
+
+		if count > 1 && !replaceAll {
+			// Find line numbers of occurrences for a more helpful error
+			lines := strings.Split(content, "\n")
+			var lineNums []string
+			for i, line := range lines {
+				if strings.Contains(line, oldStr) {
+					lineNums = append(lineNums, fmt.Sprintf("%d", i+1))
+				}
+			}
+			lineInfo := ""
+			if len(lineNums) > 0 {
+				lineInfo = fmt.Sprintf(" (lines: %s)", strings.Join(lineNums, ", "))
+			}
+			return NewErrorResult(fmt.Sprintf("old_string appears %d times in %s%s. Provide more surrounding context to make it unique, or set replace_all=true.", count, filePath, lineInfo)), nil
+		}
+
+		// Perform replacement
+		if replaceAll {
+			newContent = strings.ReplaceAll(content, oldStr, newStr)
+		} else {
+			newContent = strings.Replace(content, oldStr, newStr, 1)
+		}
 	}
 
 	// Show diff preview and wait for approval if enabled

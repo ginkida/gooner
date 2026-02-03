@@ -72,21 +72,33 @@ func (m *UIUpdateManager) Stop() {
 		close(m.stopChan)
 	})
 
+	// Stop event broadcaster first to unblock any waiting sends
+	if m.eventBroadcaster != nil {
+		m.eventBroadcaster.Stop()
+	}
+
+	// Wait for goroutines with timeout
+	// Use a channel to avoid leaking the wait goroutine
 	done := make(chan struct{})
 	go func() {
+		defer func() {
+			// Recover from panic if channel is already closed
+			recover()
+		}()
 		m.wg.Wait()
-		close(done)
+		select {
+		case done <- struct{}{}:
+		default:
+		}
 	}()
 
 	select {
 	case <-done:
 		logging.Debug("UI update manager stopped gracefully")
-	case <-time.After(10 * time.Second):
-		logging.Warn("UI update manager stop timed out")
-		if m.eventBroadcaster != nil {
-			m.eventBroadcaster.Stop()
-		}
+	case <-time.After(5 * time.Second):
+		logging.Warn("UI update manager stop timed out, continuing anyway")
 	}
+	close(done)
 }
 
 // IsRunning returns whether the update manager is running

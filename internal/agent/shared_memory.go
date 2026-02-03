@@ -18,6 +18,9 @@ const (
 	SharedEntryTypeInsight   SharedEntryType = "insight"
 	SharedEntryTypeFileState SharedEntryType = "file_state"
 	SharedEntryTypeDecision  SharedEntryType = "decision"
+
+	// MaxSharedEntries is the maximum number of entries to keep in shared memory
+	MaxSharedEntries = 500
 )
 
 // SharedEntry represents an entry in shared memory.
@@ -70,9 +73,23 @@ func (sm *SharedMemory) WriteWithTTL(key string, value any, entryType SharedEntr
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
+	// Cleanup if we're at capacity
+	if len(sm.entries) >= MaxSharedEntries {
+		sm.cleanupExpiredLocked()
+		// If still at capacity after cleanup, remove oldest entries
+		if len(sm.entries) >= MaxSharedEntries {
+			sm.removeOldestLocked(MaxSharedEntries / 4)
+		}
+	}
+
 	// Create or update entry
 	entry, exists := sm.entries[key]
 	if exists {
+		// If type changed, update the byType index
+		if entry.Type != entryType {
+			sm.removeFromTypeIndexLocked(entry.Type, key)
+			sm.byType[entryType] = append(sm.byType[entryType], key)
+		}
 		entry.Value = value
 		entry.Type = entryType
 		entry.Source = sourceAgent
@@ -251,11 +268,20 @@ func (sm *SharedMemory) GetForContext(agentID string, maxEntries int) string {
 	return sb.String()
 }
 
-// CleanupExpired removes all expired entries.
-func (sm *SharedMemory) CleanupExpired() int {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+// removeFromTypeIndexLocked removes a key from the byType index.
+// Must be called with lock held.
+func (sm *SharedMemory) removeFromTypeIndexLocked(entryType SharedEntryType, key string) {
+	keys := sm.byType[entryType]
+	for i, k := range keys {
+		if k == key {
+			sm.byType[entryType] = append(keys[:i], keys[i+1:]...)
+			return
+		}
+	}
+}
 
+// cleanupExpiredLocked removes expired entries. Must be called with lock held.
+func (sm *SharedMemory) cleanupExpiredLocked() int {
 	var expired []string
 	for key, entry := range sm.entries {
 		if entry.IsExpired() {
@@ -265,18 +291,61 @@ func (sm *SharedMemory) CleanupExpired() int {
 
 	for _, key := range expired {
 		entry := sm.entries[key]
-		// Remove from type index
-		keys := sm.byType[entry.Type]
-		for i, k := range keys {
-			if k == key {
-				sm.byType[entry.Type] = append(keys[:i], keys[i+1:]...)
-				break
-			}
-		}
+		sm.removeFromTypeIndexLocked(entry.Type, key)
 		delete(sm.entries, key)
 	}
 
 	return len(expired)
+}
+
+// removeOldestLocked removes the oldest N entries. Must be called with lock held.
+func (sm *SharedMemory) removeOldestLocked(count int) {
+	if count <= 0 || len(sm.entries) == 0 {
+		return
+	}
+
+	// Find oldest entries by timestamp
+	type entryTime struct {
+		key string
+		ts  time.Time
+	}
+	var entries []entryTime
+	for key, entry := range sm.entries {
+		entries = append(entries, entryTime{key: key, ts: entry.Timestamp})
+	}
+
+	// Simple selection of oldest (not sorted, just pick oldest)
+	removed := 0
+	for removed < count && len(entries) > 0 {
+		oldestIdx := 0
+		for i := 1; i < len(entries); i++ {
+			if entries[i].ts.Before(entries[oldestIdx].ts) {
+				oldestIdx = i
+			}
+		}
+
+		key := entries[oldestIdx].key
+		if entry, ok := sm.entries[key]; ok {
+			sm.removeFromTypeIndexLocked(entry.Type, key)
+			delete(sm.entries, key)
+		}
+
+		// Remove from local list
+		entries = append(entries[:oldestIdx], entries[oldestIdx+1:]...)
+		removed++
+	}
+
+	if removed > 0 {
+		logging.Debug("shared memory: removed oldest entries", "count", removed)
+	}
+}
+
+// CleanupExpired removes all expired entries.
+func (sm *SharedMemory) CleanupExpired() int {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	return sm.cleanupExpiredLocked()
 }
 
 // Stats returns statistics about the shared memory.

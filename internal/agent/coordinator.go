@@ -11,6 +11,12 @@ import (
 	"gokin/internal/logging"
 )
 
+// Constants for resource management
+const (
+	// MaxCoordinatorTasks is the maximum number of completed tasks to keep
+	MaxCoordinatorTasks = 100
+)
+
 // Coordinator manages multiple agents with dependencies and parallelism.
 type Coordinator struct {
 	runner       *Runner
@@ -77,6 +83,36 @@ func (c *Coordinator) SetReflector(r *Reflector) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.reflector = r
+}
+
+// cleanupCompletedTasks removes old completed tasks to prevent unbounded memory growth.
+func (c *Coordinator) cleanupCompletedTasks() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Count completed tasks
+	completedCount := len(c.completed)
+	if completedCount <= MaxCoordinatorTasks {
+		return
+	}
+
+	// Find and remove oldest completed tasks
+	removeCount := completedCount - MaxCoordinatorTasks/2
+	removed := 0
+	for taskID := range c.completed {
+		if removed >= removeCount {
+			break
+		}
+		// Remove from all maps
+		delete(c.tasks, taskID)
+		delete(c.completed, taskID)
+		delete(c.dependencies, taskID)
+		removed++
+	}
+
+	if removed > 0 {
+		logging.Debug("coordinator cleaned up old tasks", "removed", removed)
+	}
 }
 
 // generateTaskID creates a unique task ID.
@@ -241,7 +277,7 @@ func (c *Coordinator) startTask(task *CoordinatedTask) {
 // checkCompletedAgents checks for completed agents and updates tasks.
 func (c *Coordinator) checkCompletedAgents() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	// Note: explicit unlock at end of function to allow cleanup outside lock
 
 	for agentID, taskID := range c.running {
 		result, ok := c.runner.GetResult(agentID)
@@ -281,6 +317,15 @@ func (c *Coordinator) checkCompletedAgents() {
 
 		// Unblock dependent tasks
 		c.unblockDependents(taskID)
+	}
+
+	// Check if cleanup is needed (threshold reached)
+	needsCleanup := len(c.completed) > MaxCoordinatorTasks
+	c.mu.Unlock()
+
+	// Cleanup old completed tasks if needed (after releasing lock)
+	if needsCleanup {
+		c.cleanupCompletedTasks()
 	}
 }
 

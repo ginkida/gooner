@@ -2,11 +2,16 @@ package setup
 
 import (
 	"bufio"
+	"context"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/ollama/ollama/api"
 )
 
 // ANSI color codes for enhanced output
@@ -188,6 +193,28 @@ func setupOllamaLocal(reader *bufio.Reader) error {
 	fmt.Printf("  1. Install Ollama: %scurl -fsSL https://ollama.ai/install.sh | sh%s\n", colorBold, colorReset)
 	fmt.Printf("  2. Start server:   %sollama serve%s\n", colorBold, colorReset)
 	fmt.Printf("  3. Pull a model:   %sollama pull llama3.2%s\n\n", colorBold, colorReset)
+
+	// Check for installed models
+	fmt.Printf("%sChecking installed models...%s\n", colorYellow, colorReset)
+
+	models, err := detectInstalledOllamaModels("")
+	if err != nil {
+		fmt.Printf("  %s⚠ Could not connect to Ollama: %s%s\n", colorRed, err, colorReset)
+		fmt.Printf("  %sMake sure Ollama is running: ollama serve%s\n\n", colorYellow, colorReset)
+	} else if len(models) > 0 {
+		fmt.Printf("  %s✓ Found %d installed model(s):%s\n", colorGreen, len(models), colorReset)
+		for i, m := range models {
+			if i < 5 { // Show first 5
+				fmt.Printf("    • %s\n", m)
+			}
+		}
+		if len(models) > 5 {
+			fmt.Printf("    • ... and %d more\n", len(models)-5)
+		}
+		fmt.Println()
+	} else {
+		fmt.Printf("  %s⚠ No models installed. Run: ollama pull llama3.2%s\n\n", colorYellow, colorReset)
+	}
 
 	fmt.Printf("%sEnter model name (or press Enter for 'llama3.2'):%s ", colorGreen, colorReset)
 
@@ -375,4 +402,29 @@ func getConfigPath() (string, error) {
 		configDir = filepath.Join(home, ".config")
 	}
 	return filepath.Join(configDir, "gokin", "config.yaml"), nil
+}
+
+// detectInstalledOllamaModels returns a list of installed Ollama models.
+func detectInstalledOllamaModels(serverURL string) ([]string, error) {
+	if serverURL == "" {
+		serverURL = "http://localhost:11434"
+	}
+
+	baseURL, err := url.Parse(serverURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid server URL: %w", err)
+	}
+
+	client := api.NewClient(baseURL, &http.Client{Timeout: 5 * time.Second})
+
+	resp, err := client.List(context.Background())
+	if err != nil {
+		return nil, err
+	}
+
+	models := make([]string, 0, len(resp.Models))
+	for _, m := range resp.Models {
+		models = append(models, m.Name)
+	}
+	return models, nil
 }

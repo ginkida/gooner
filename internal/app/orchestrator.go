@@ -14,28 +14,28 @@ import (
 type OrchestratorTaskStatus int
 
 const (
-	TaskStatusPending OrchestratorTaskStatus = iota
-	TaskStatusReady
-	TaskStatusRunning
-	TaskStatusCompleted
-	TaskStatusFailed
-	TaskStatusSkipped
+	OrchStatusPending OrchestratorTaskStatus = iota
+	OrchStatusReady
+	OrchStatusRunning
+	OrchStatusCompleted
+	OrchStatusFailed
+	OrchStatusSkipped
 )
 
 // OrchestratorTask priority.
-type TaskPriority int
+type OrchPriority int
 
 const (
-	PriorityLow TaskPriority = iota
-	PriorityNormal
-	PriorityHigh
+	OrchPriorityLow OrchPriority = iota
+	OrchPriorityNormal
+	OrchPriorityHigh
 )
 
 // OrchestratorTask represents a unified unit of work.
 type OrchestratorTask struct {
 	ID           string
 	Name         string
-	Priority     TaskPriority
+	Priority     OrchPriority
 	Dependencies []string
 	Execute      func(ctx context.Context) error
 	OnComplete   func(err error)
@@ -89,7 +89,7 @@ func (o *TaskOrchestrator) Submit(task *OrchestratorTask) error {
 		return fmt.Errorf("task %s already exists", task.ID)
 	}
 
-	task.Status = TaskStatusPending
+	task.Status = OrchStatusPending
 	task.CreatedAt = time.Now()
 	o.tasks[task.ID] = task
 
@@ -140,7 +140,7 @@ func (o *TaskOrchestrator) schedule() {
 	var readyTasks []*OrchestratorTask
 	for _, t := range o.tasks {
 		t.mu.RLock()
-		if t.Status == TaskStatusPending && o.isReady(t) {
+		if t.Status == OrchStatusPending && o.isReady(t) {
 			readyTasks = append(readyTasks, t)
 		}
 		t.mu.RUnlock()
@@ -161,7 +161,7 @@ func (o *TaskOrchestrator) schedule() {
 		}
 
 		t.mu.Lock()
-		t.Status = TaskStatusReady
+		t.Status = OrchStatusReady
 		t.mu.Unlock()
 
 		o.activeCount++
@@ -180,7 +180,7 @@ func (o *TaskOrchestrator) isReady(t *OrchestratorTask) bool {
 		dep.mu.RLock()
 		status := dep.Status
 		dep.mu.RUnlock()
-		if status != TaskStatusCompleted {
+		if status != OrchStatusCompleted {
 			return false
 		}
 	}
@@ -200,12 +200,12 @@ func (o *TaskOrchestrator) executeTask(ctx context.Context, t *OrchestratorTask)
 
 		now := time.Now()
 		t.mu.Lock()
-		t.Status = TaskStatusRunning
+		t.Status = OrchStatusRunning
 		t.StartedAt = &now
 		t.mu.Unlock()
 
 		if o.onStatusChange != nil {
-			o.onStatusChange(t.ID, TaskStatusRunning)
+			o.onStatusChange(t.ID, OrchStatusRunning)
 		}
 
 		// Execute with timeout
@@ -218,18 +218,18 @@ func (o *TaskOrchestrator) executeTask(ctx context.Context, t *OrchestratorTask)
 		compNow := time.Now()
 		t.CompletedAt = &compNow
 		if err != nil {
-			t.Status = TaskStatusFailed
+			t.Status = OrchStatusFailed
 			t.Error = err
 			logging.Error("task failed", "id", t.ID, "error", err)
 		} else {
-			t.Status = TaskStatusCompleted
+			t.Status = OrchStatusCompleted
 		}
 		t.mu.Unlock()
 
 		if o.onStatusChange != nil {
-			status := TaskStatusCompleted
+			status := OrchStatusCompleted
 			if err != nil {
-				status = TaskStatusFailed
+				status = OrchStatusFailed
 			}
 			o.onStatusChange(t.ID, status)
 		}
@@ -252,14 +252,14 @@ func (o *TaskOrchestrator) skipDependents(failedID string) {
 	o.mu.Lock()
 	for _, t := range o.tasks {
 		t.mu.Lock()
-		if t.Status == TaskStatusPending {
+		if t.Status == OrchStatusPending {
 			for _, depID := range t.Dependencies {
 				if depID == failedID {
-					t.Status = TaskStatusSkipped
+					t.Status = OrchStatusSkipped
 					t.Error = fmt.Errorf("dependency %s failed", failedID)
 					toSkip = append(toSkip, t.ID)
 					if o.onStatusChange != nil {
-						o.onStatusChange(t.ID, TaskStatusSkipped)
+						o.onStatusChange(t.ID, OrchStatusSkipped)
 					}
 					break
 				}
@@ -284,15 +284,15 @@ func (o *TaskOrchestrator) GetStats() map[string]int {
 	for _, t := range o.tasks {
 		t.mu.RLock()
 		switch t.Status {
-		case TaskStatusPending:
+		case OrchStatusPending:
 			stats["pending"]++
-		case TaskStatusRunning:
+		case OrchStatusRunning:
 			stats["running"]++
-		case TaskStatusCompleted:
+		case OrchStatusCompleted:
 			stats["completed"]++
-		case TaskStatusFailed:
+		case OrchStatusFailed:
 			stats["failed"]++
-		case TaskStatusSkipped:
+		case OrchStatusSkipped:
 			stats["skipped"]++
 		}
 		t.mu.RUnlock()
@@ -318,7 +318,7 @@ func (o *TaskOrchestrator) Cleanup() int {
 		status := t.Status
 		t.mu.RUnlock()
 
-		if status == TaskStatusCompleted || status == TaskStatusFailed || status == TaskStatusSkipped {
+		if status == OrchStatusCompleted || status == OrchStatusFailed || status == OrchStatusSkipped {
 			toRemove = append(toRemove, id)
 		}
 	}
@@ -351,15 +351,15 @@ func (o *TaskOrchestrator) CancelTask(id string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if t.Status != TaskStatusPending {
+	if t.Status != OrchStatusPending {
 		return fmt.Errorf("task %s is not pending (status: %d)", id, t.Status)
 	}
 
-	t.Status = TaskStatusSkipped
+	t.Status = OrchStatusSkipped
 	t.Error = fmt.Errorf("cancelled by user")
 
 	if o.onStatusChange != nil {
-		o.onStatusChange(id, TaskStatusSkipped)
+		o.onStatusChange(id, OrchStatusSkipped)
 	}
 
 	return nil

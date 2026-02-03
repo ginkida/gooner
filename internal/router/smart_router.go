@@ -168,10 +168,26 @@ func (sr *SmartRouter) Execute(ctx context.Context, history []*genai.Content, me
 	}
 
 	// Record successful executions for few-shot learning
+	// Use a bounded goroutine with timeout to prevent hanging
 	if success && sr.exampleStore != nil {
 		go func() {
-			if err := sr.exampleStore.LearnFromSuccess(taskType, message, agentType, output, duration, 0); err != nil {
-				logging.Debug("failed to learn from success", "error", err)
+			// Timeout to prevent goroutine leak if store is slow
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				if err := sr.exampleStore.LearnFromSuccess(taskType, message, agentType, output, duration, 0); err != nil {
+					logging.Debug("failed to learn from success", "error", err)
+				}
+			}()
+
+			select {
+			case <-done:
+				// Completed successfully
+			case <-ctx.Done():
+				logging.Warn("learning from success timed out")
 			}
 		}()
 	}

@@ -76,21 +76,29 @@ func (sm *SessionManager) Start(ctx context.Context) {
 	sm.saveTimer = time.AfterFunc(sm.config.SaveInterval, func() {
 		sm.periodicSave()
 	})
-
-	// Start goroutine to handle stop signal
-	go func() {
-		<-sm.stopChan
-		sm.mu.Lock()
-		if sm.saveTimer != nil {
-			sm.saveTimer.Stop()
-		}
-		sm.mu.Unlock()
-	}()
 }
+
+// Note: Stop() is responsible for cleaning up the timer.
+// We don't spawn a goroutine to listen for stopChan because it would leak
+// if the manager is garbage collected without calling Stop().
 
 // Stop gracefully shuts down the session manager.
 func (sm *SessionManager) Stop() {
-	close(sm.stopChan)
+	// Stop the save timer first
+	sm.mu.Lock()
+	if sm.saveTimer != nil {
+		sm.saveTimer.Stop()
+		sm.saveTimer = nil
+	}
+	sm.mu.Unlock()
+
+	// Close stop channel to signal any listeners
+	select {
+	case <-sm.stopChan:
+		// Already closed
+	default:
+		close(sm.stopChan)
+	}
 
 	// Final save on shutdown
 	if err := sm.Save(); err != nil {

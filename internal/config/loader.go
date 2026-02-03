@@ -134,9 +134,9 @@ func (c *Config) Save() error {
 		return fmt.Errorf("could not determine config path")
 	}
 
-	// Ensure config directory exists
+	// Ensure config directory exists (0700 for security - only owner can access)
 	configDir := filepath.Dir(configPath)
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(configDir, 0700); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
@@ -147,15 +147,16 @@ func (c *Config) Save() error {
 	}
 
 	// Write to file atomically (write to temp file then rename)
+	// Use 0600 permissions for security - config may contain API keys
 	tmpPath := configPath + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
 	// Rename temp file to actual config file (atomic on POSIX systems)
 	if err := os.Rename(tmpPath, configPath); err != nil {
 		// If rename fails, try direct write (Windows filesystem)
-		if err := os.WriteFile(configPath, data, 0644); err != nil {
+		if err := os.WriteFile(configPath, data, 0600); err != nil {
 			return fmt.Errorf("failed to write config file: %w", err)
 		}
 	}

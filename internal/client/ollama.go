@@ -395,6 +395,66 @@ func (c *OllamaClient) ListModels(ctx context.Context) ([]string, error) {
 	return models, nil
 }
 
+// PullProgress contains information about model download progress.
+type PullProgress struct {
+	Status    string  // "pulling", "verifying", "done"
+	Digest    string  // Layer being downloaded
+	Total     int64   // Total size in bytes
+	Completed int64   // Downloaded bytes
+	Percent   float64 // Completion percentage (0-100)
+}
+
+// PullModel downloads a model from Ollama Hub with progress reporting.
+func (c *OllamaClient) PullModel(ctx context.Context, modelName string, progressFn func(PullProgress)) error {
+	req := &api.PullRequest{
+		Model: modelName,
+	}
+
+	return c.client.Pull(ctx, req, func(resp api.ProgressResponse) error {
+		if progressFn != nil {
+			var percent float64
+			if resp.Total > 0 {
+				percent = float64(resp.Completed) / float64(resp.Total) * 100
+			}
+			progressFn(PullProgress{
+				Status:    resp.Status,
+				Digest:    resp.Digest,
+				Total:     resp.Total,
+				Completed: resp.Completed,
+				Percent:   percent,
+			})
+		}
+		return nil
+	})
+}
+
+// Healthcheck verifies that the Ollama server is accessible.
+func (c *OllamaClient) Healthcheck(ctx context.Context) error {
+	// Ollama SDK doesn't have an explicit ping, use List as healthcheck
+	_, err := c.client.List(ctx)
+	if err != nil {
+		return c.wrapOllamaError(err)
+	}
+	return nil
+}
+
+// IsModelAvailable checks if a model is installed locally.
+func (c *OllamaClient) IsModelAvailable(ctx context.Context, modelName string) (bool, error) {
+	models, err := c.ListModels(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	for _, m := range models {
+		// Check exact match or with :latest tag
+		if m == modelName || m == modelName+":latest" ||
+			strings.HasPrefix(m, modelName+":") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // convertHistoryToMessages converts Gemini history to Ollama messages format.
 func (c *OllamaClient) convertHistoryToMessages(history []*genai.Content, newMessage string) []api.Message {
 	messages := make([]api.Message, 0, len(history)+1)
@@ -605,6 +665,28 @@ func (c *OllamaClient) isRetryableError(err error) bool {
 	return false
 }
 
+// IsModelNotFoundError checks if the error indicates a missing model.
+func IsModelNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+
+	// Check wrapped error message patterns
+	if strings.Contains(errStr, "is not installed") ||
+		(strings.Contains(errStr, "model") && strings.Contains(errStr, "not found")) {
+		return true
+	}
+
+	// Check status error
+	var statusErr *api.StatusError
+	if errors.As(err, &statusErr) && statusErr.StatusCode == 404 {
+		return true
+	}
+
+	return false
+}
+
 // wrapOllamaError wraps Ollama errors with user-friendly messages.
 func (c *OllamaClient) wrapOllamaError(err error) error {
 	if err == nil {
@@ -615,22 +697,52 @@ func (c *OllamaClient) wrapOllamaError(err error) error {
 
 	// Connection refused - Ollama not running
 	if strings.Contains(errStr, "connection refused") {
-		return fmt.Errorf("Ollama server not running. Start it with: ollama serve\nOriginal error: %w", err)
+		return fmt.Errorf(`Ollama server is not running.
+
+To fix this:
+  1. Start Ollama: ollama serve
+  2. Or check if it's running: ollama list
+
+Original error: %w`, err)
 	}
 
-	// Check for model not found
+	// Timeout
+	if strings.Contains(errStr, "timeout") || strings.Contains(errStr, "deadline exceeded") {
+		return fmt.Errorf(`Ollama request timed out.
+
+Possible causes:
+  • Model is loading into memory (first request is slow)
+  • Model is too large for available RAM/VRAM
+  • Server is overloaded
+
+Try again or use a smaller model.
+
+Original error: %w`, err)
+	}
+
+	// Check for model not found via status error
 	var statusErr *api.StatusError
 	if errors.As(err, &statusErr) {
 		if statusErr.StatusCode == 404 {
-			return fmt.Errorf("model '%s' not found. Download it with: ollama pull %s\nOriginal error: %w",
-				c.config.Model, c.config.Model, err)
+			return fmt.Errorf(`Model '%s' is not installed.
+
+To fix this:
+  1. Pull the model: ollama pull %s
+  2. Or list available models: ollama list
+
+Original error: %w`, c.config.Model, c.config.Model, err)
 		}
 	}
 
-	// Model pull required
+	// Generic model not found
 	if strings.Contains(errStr, "model") && strings.Contains(errStr, "not found") {
-		return fmt.Errorf("model '%s' not found. Download it with: ollama pull %s\nOriginal error: %w",
-			c.config.Model, c.config.Model, err)
+		return fmt.Errorf(`Model '%s' is not installed.
+
+To fix this:
+  1. Pull the model: ollama pull %s
+  2. Or list available models: ollama list
+
+Original error: %w`, c.config.Model, c.config.Model, err)
 	}
 
 	return err

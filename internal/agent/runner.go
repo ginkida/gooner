@@ -14,6 +14,14 @@ import (
 	"gokin/internal/tools"
 )
 
+// Constants for resource management
+const (
+	// MaxAgentResults is the maximum number of agent results to keep in memory
+	MaxAgentResults = 100
+	// MaxCompletedAgents is the maximum number of completed agents to keep
+	MaxCompletedAgents = 50
+)
+
 // ActivityReporter is an interface for reporting agent activity.
 type ActivityReporter interface {
 	ReportActivity()
@@ -226,17 +234,20 @@ func (r *Runner) SetOnAgentProgress(callback func(id string, progress *AgentProg
 }
 
 // SetOnScratchpadUpdate sets the callback for agent scratchpad updates.
+// The callback is called asynchronously to avoid deadlock.
 func (r *Runner) SetOnScratchpadUpdate(fn func(string)) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.onScratchpadUpdate = func(content string) {
+		// Update shared scratchpad atomically
 		r.mu.Lock()
 		r.sharedScratchpad = content
 		r.mu.Unlock()
+		// Call user callback outside the lock to prevent deadlock
 		if fn != nil {
 			fn(content)
 		}
 	}
-	r.mu.Unlock()
 }
 
 // SetSharedScratchpad sets the shared scratchpad content.
@@ -349,10 +360,58 @@ func (r *Runner) SetClient(c client.Client) {
 	r.client = c
 }
 
+// cleanupOldResults removes old completed agents and results to prevent unbounded growth.
+// Should be called periodically or when capacity is reached.
+func (r *Runner) cleanupOldResults() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Clean up completed agents if we exceed the limit
+	if len(r.agents) > MaxCompletedAgents {
+		var completedIDs []string
+		for id, agent := range r.agents {
+			if agent.GetStatus() == AgentStatusCompleted ||
+				agent.GetStatus() == AgentStatusFailed ||
+				agent.GetStatus() == AgentStatusCancelled {
+				completedIDs = append(completedIDs, id)
+			}
+		}
+		// Remove oldest completed agents (keep MaxCompletedAgents/2)
+		removeCount := len(completedIDs) - MaxCompletedAgents/2
+		if removeCount > 0 && removeCount <= len(completedIDs) {
+			for i := 0; i < removeCount; i++ {
+				delete(r.agents, completedIDs[i])
+			}
+			logging.Debug("cleaned up old agents", "removed", removeCount)
+		}
+	}
+
+	// Clean up old results if we exceed the limit
+	if len(r.results) > MaxAgentResults {
+		// Keep only MaxAgentResults/2 results
+		var oldestIDs []string
+		for id, result := range r.results {
+			if result.Completed {
+				oldestIDs = append(oldestIDs, id)
+			}
+		}
+		removeCount := len(oldestIDs) - MaxAgentResults/2
+		if removeCount > 0 && removeCount <= len(oldestIDs) {
+			for i := 0; i < removeCount; i++ {
+				delete(r.results, oldestIDs[i])
+			}
+			logging.Debug("cleaned up old results", "removed", removeCount)
+		}
+	}
+}
+
 // Spawn creates and starts a new agent with the given task.
 // agentType should be "explore", "bash", "general", "plan", "claude-code-guide", or "coordinator".
 // Also supports dynamic types registered via AgentTypeRegistry.
 func (r *Runner) Spawn(ctx context.Context, agentType string, prompt string, maxTurns int, model string) (string, error) {
+	// Cleanup old completed agents and results to prevent unbounded growth
+	r.cleanupOldResults()
+
 	r.mu.RLock()
 	ctxCfg := r.ctxCfg
 	errorStore := r.errorStore

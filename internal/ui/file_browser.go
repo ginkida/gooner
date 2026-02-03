@@ -62,6 +62,10 @@ type FileBrowserModel struct {
 	filterInput  string
 	filterActive bool
 
+	// Error message (displayed temporarily)
+	errorMsg     string
+	errorTimeout int // Countdown ticks to clear error
+
 	// Callback for actions
 	onAction func(action FileBrowserAction, path string, files []string)
 }
@@ -378,6 +382,12 @@ func (m FileBrowserModel) Init() tea.Cmd {
 func (m FileBrowserModel) Update(msg tea.Msg) (FileBrowserModel, tea.Cmd) {
 	var cmd tea.Cmd
 
+	// Clear error message on any key press (user acknowledgment)
+	if _, ok := msg.(tea.KeyMsg); ok && m.errorMsg != "" {
+		m.errorMsg = ""
+		m.errorTimeout = 0
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		// If filter is active, handle text input
@@ -421,7 +431,9 @@ func (m FileBrowserModel) Update(msg tea.Msg) (FileBrowserModel, tea.Cmd) {
 				entry := m.entries[m.selectedIndex]
 				if entry.IsDir {
 					if err := m.SetPath(entry.Path); err != nil {
-						// Stay in current directory on error
+						// Show error message instead of silently failing
+						m.errorMsg = fmt.Sprintf("Cannot access: %s", err.Error())
+						m.errorTimeout = 30 // Clear after ~3 seconds (10 ticks/sec)
 						return m, nil
 					}
 				} else {
@@ -438,10 +450,11 @@ func (m FileBrowserModel) Update(msg tea.Msg) (FileBrowserModel, tea.Cmd) {
 			}
 
 		case "h", "backspace", "left":
-			// Go to parent directory - stay in current if navigation fails
+			// Go to parent directory - show error if navigation fails
 			if m.currentDir != "/" {
 				if err := m.SetPath(filepath.Dir(m.currentDir)); err != nil {
-					// Stay in current directory on error
+					m.errorMsg = fmt.Sprintf("Cannot access parent: %s", err.Error())
+					m.errorTimeout = 30
 					return m, nil
 				}
 			}
@@ -568,6 +581,14 @@ func (m FileBrowserModel) View() string {
 			filterText += "▊"
 		}
 		builder.WriteString(filterStyle.Render(fmt.Sprintf("  Filter: %s\n", filterText)))
+	}
+
+	// Error message (if any)
+	if m.errorMsg != "" {
+		errorStyle := lipgloss.NewStyle().
+			Foreground(ColorError).
+			Bold(true)
+		builder.WriteString(errorStyle.Render(fmt.Sprintf("  ⚠ %s\n", m.errorMsg)))
 	}
 
 	builder.WriteString("\n")

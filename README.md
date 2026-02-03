@@ -44,9 +44,9 @@ Gokin (GLM-4 / Gemini Flash 3)   →     Claude Code (Claude Opus 4.5)
 ## Features
 
 ### Core
-- **File Operations** — Read, create, edit files (including PDF, images, Jupyter notebooks)
+- **File Operations** — Read, create, edit, copy, move, delete files and directories (including PDF, images, Jupyter notebooks)
 - **Shell Execution** — Run commands with timeout, background execution, sandbox mode
-- **Search** — Glob patterns, regex grep, semantic search with embeddings
+- **Search** — Glob patterns, regex grep (with regex replacement in edit), semantic search with embeddings
 
 ### AI Providers
 - **Google Gemini** — Gemini 3 Pro/Flash, free tier available
@@ -59,11 +59,11 @@ Gokin (GLM-4 / Gemini Flash 3)   →     Claude Code (Claude Opus 4.5)
 - **Semantic Search** — Find code by meaning, not just keywords
 
 ### Productivity
-- **Git Integration** — Commit, pull request, blame, diff, log
+- **Git Integration** — Status, add, commit, pull request, blame, diff, log
 - **Task Management** — Todo list, background tasks
 - **Memory System** — Remember information between sessions
 - **Sessions** — Save and restore conversation state
-- **Undo/Redo** — Revert file changes
+- **Undo/Redo** — Revert file changes (including copy, move, delete operations)
 
 ### Extensibility
 - **MCP Support** — Connect to external MCP servers for additional tools
@@ -338,7 +338,7 @@ All commands start with `/`:
 
 ## AI Tools
 
-AI has access to 40+ tools:
+AI has access to 50+ tools:
 
 ### File Operations
 
@@ -346,7 +346,11 @@ AI has access to 40+ tools:
 |------|-------------|
 | `read` | Read files (text, images, PDF, Jupyter notebooks) |
 | `write` | Create and overwrite files |
-| `edit` | Find and replace text in files |
+| `edit` | Find and replace text in files (supports regex mode) |
+| `copy` | Copy files and directories |
+| `move` | Move or rename files and directories |
+| `delete` | Delete files and directories (with safety checks) |
+| `mkdir` | Create directories (supports recursive creation) |
 | `diff` | Compare files |
 | `batch` | Bulk operations (replace, rename, delete) on multiple files |
 
@@ -374,6 +378,9 @@ AI has access to 40+ tools:
 
 | Tool | Description |
 |------|-------------|
+| `git_status` | Repository status (modified, staged, untracked files) |
+| `git_add` | Stage files for commit (supports patterns, --all, --update) |
+| `git_commit` | Create commits (with message, --all, --amend options) |
 | `git_log` | Commit history |
 | `git_blame` | Line-by-line authorship |
 | `git_diff` | Diff between branches/commits |
@@ -660,6 +667,12 @@ When showing API keys in status or logs, Gokin masks the middle:
 - Bash commands run with sanitized environment
 - API keys are excluded from subprocesses
 - Dangerous commands are blocked by default
+
+### Secure Configuration
+
+- Config directory uses `0700` permissions (owner-only access)
+- Config file uses `0600` permissions (owner read/write only)
+- Atomic file writes prevent corruption
 
 ### Model Override
 
@@ -986,10 +999,12 @@ gokin/
 │   │   ├── transport.go     # Stdio/HTTP transports
 │   │   ├── manager.go       # Multi-server management
 │   │   └── tool.go          # MCP tool wrapper
-│   ├── tools/               # 40+ AI tools
+│   ├── tools/               # 50+ AI tools
 │   │   ├── read.go, write.go, edit.go
+│   │   ├── copy.go, move.go, delete.go, mkdir.go
 │   │   ├── bash.go, grep.go, glob.go
-│   │   ├── git_*.go         # Git operations
+│   │   ├── git_status.go, git_add.go, git_commit.go
+│   │   ├── git_log.go, git_blame.go, git_diff.go
 │   │   ├── semantic_*.go    # Semantic search
 │   │   ├── plan_mode.go     # Planning tools
 │   │   └── ...

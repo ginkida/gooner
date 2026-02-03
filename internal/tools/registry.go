@@ -138,10 +138,19 @@ func DefaultRegistry(workDir string) *Registry {
 	// Plan verification tool (contract merged into plan)
 	r.MustRegister(NewVerifyPlanTool())
 
+	// File operation tools
+	r.MustRegister(NewCopyTool(workDir))
+	r.MustRegister(NewMoveTool(workDir))
+	r.MustRegister(NewDeleteTool(workDir))
+	r.MustRegister(NewMkdirTool(workDir))
+
 	// Git tools
 	r.MustRegister(NewGitLogTool(workDir))
 	r.MustRegister(NewGitBlameTool(workDir))
 	r.MustRegister(NewGitDiffTool(workDir))
+	r.MustRegister(NewGitStatusTool(workDir))
+	r.MustRegister(NewGitAddTool(workDir))
+	r.MustRegister(NewGitCommitTool(workDir))
 
 	// SSH tool
 	r.MustRegister(NewSSHTool())

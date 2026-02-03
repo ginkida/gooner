@@ -36,15 +36,15 @@ func (a *App) setupOrchestratorCallbacks() {
 
 		// Map orchestrator status to UI broadcast
 		switch status {
-		case TaskStatusRunning:
+		case OrchStatusRunning:
 			// For orchestrator, we might need more details.
 			// For now, simple broadcast.
 			a.uiUpdateManager.BroadcastTaskStart(taskID, "Task "+taskID, "orchestrator")
-		case TaskStatusCompleted:
+		case OrchStatusCompleted:
 			a.uiUpdateManager.BroadcastTaskComplete(taskID, true, 0, nil, "orchestrator")
-		case TaskStatusFailed:
+		case OrchStatusFailed:
 			a.uiUpdateManager.BroadcastTaskComplete(taskID, false, 0, nil, "orchestrator")
-		case TaskStatusSkipped:
+		case OrchStatusSkipped:
 			a.uiUpdateManager.BroadcastTaskComplete(taskID, false, 0, nil, "orchestrator")
 		}
 	})
