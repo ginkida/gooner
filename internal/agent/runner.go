@@ -84,6 +84,9 @@ type Runner struct {
 	// Phase 2: Prompt optimizer
 	promptOptimizer *PromptOptimizer
 
+	// Sub-agent activity callback for UI updates
+	onSubAgentActivity func(agentID, agentType, toolName string, args map[string]any, status string)
+
 	mu sync.RWMutex
 }
 
@@ -313,6 +316,13 @@ func (r *Runner) SetOnInput(callback func(string) (string, error)) {
 func (r *Runner) SetPromptOptimizer(optimizer *PromptOptimizer) {
 	r.mu.Lock()
 	r.promptOptimizer = optimizer
+	r.mu.Unlock()
+}
+
+// SetOnSubAgentActivity sets the callback for sub-agent activity reporting.
+func (r *Runner) SetOnSubAgentActivity(fn func(agentID, agentType, toolName string, args map[string]any, status string)) {
+	r.mu.Lock()
+	r.onSubAgentActivity = fn
 	r.mu.Unlock()
 }
 
@@ -567,6 +577,16 @@ func (r *Runner) SpawnWithContext(
 	agent.SetProjectContext(projectContext)
 	agent.SetOnText(onText)
 
+	// Wire sub-agent activity callback
+	r.mu.RLock()
+	onSubAgentActivity := r.onSubAgentActivity
+	r.mu.RUnlock()
+	if onSubAgentActivity != nil {
+		agent.SetOnToolActivity(func(agentID, toolName string, args map[string]any, status string) {
+			onSubAgentActivity(agentID, string(agent.Type), toolName, args, "tool_"+status)
+		})
+	}
+
 	r.mu.Lock()
 	r.agents[agent.ID] = agent
 	r.mu.Unlock()
@@ -733,6 +753,16 @@ func (r *Runner) SpawnAsyncWithStreaming(
 	// Wire shared memory if available
 	if sharedMem != nil {
 		agent.SetSharedMemory(sharedMem)
+	}
+
+	// Wire sub-agent activity callback
+	r.mu.RLock()
+	onSubAgentActivity := r.onSubAgentActivity
+	r.mu.RUnlock()
+	if onSubAgentActivity != nil {
+		agent.SetOnToolActivity(func(agentID, toolName string, args map[string]any, status string) {
+			onSubAgentActivity(agentID, string(agent.Type), toolName, args, "tool_"+status)
+		})
 	}
 
 	r.mu.Lock()

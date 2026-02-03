@@ -32,11 +32,12 @@ type OllamaConfig struct {
 
 // OllamaClient implements Client interface for Ollama API.
 type OllamaClient struct {
-	client      *api.Client
-	config      OllamaConfig
-	tools       []*genai.Tool
-	rateLimiter RateLimiter
-	mu          sync.RWMutex
+	client         *api.Client
+	config         OllamaConfig
+	tools          []*genai.Tool
+	rateLimiter    RateLimiter
+	statusCallback StatusCallback
+	mu             sync.RWMutex
 }
 
 // authTransport adds Authorization header to HTTP requests.
@@ -193,6 +194,27 @@ func (c *OllamaClient) streamChat(ctx context.Context, req *api.ChatRequest) (*S
 		if attempt > 0 {
 			delay := calculateBackoffWithJitter(c.config.RetryDelay, attempt-1, maxDelay)
 			logging.Info("retrying Ollama request", "attempt", attempt, "delay", delay)
+
+			// Notify UI about retry
+			c.mu.RLock()
+			cb := c.statusCallback
+			c.mu.RUnlock()
+			if cb != nil {
+				reason := "API error"
+				if lastErr != nil {
+					reason = lastErr.Error()
+					// Shorten common error patterns
+					if strings.Contains(reason, "connection refused") {
+						reason = "Ollama not running"
+					} else if strings.Contains(reason, "timeout") {
+						reason = "timeout"
+					} else if len(reason) > 50 {
+						reason = reason[:47] + "..."
+					}
+				}
+				cb.OnRetry(attempt, c.config.MaxRetries, delay, reason)
+			}
+
 			select {
 			case <-time.After(delay):
 			case <-ctx.Done():
@@ -230,6 +252,11 @@ func (c *OllamaClient) streamChat(ctx context.Context, req *api.ChatRequest) (*S
 func (c *OllamaClient) doStreamChat(ctx context.Context, req *api.ChatRequest) (*StreamingResponse, error) {
 	chunks := make(chan ResponseChunk, 10)
 	done := make(chan struct{})
+
+	// Capture status callback for goroutine
+	c.mu.RLock()
+	statusCb := c.statusCallback
+	c.mu.RUnlock()
 
 	go func() {
 		defer close(chunks)
@@ -279,6 +306,10 @@ func (c *OllamaClient) doStreamChat(ctx context.Context, req *api.ChatRequest) (
 		})
 
 		if err != nil {
+			// Notify about recoverable errors
+			if statusCb != nil && c.isRetryableError(err) {
+				statusCb.OnError(err, true)
+			}
 			// Send error through chunks channel - this is the standard pattern
 			select {
 			case chunks <- ResponseChunk{Error: c.wrapOllamaError(err), Done: true}:
@@ -308,6 +339,13 @@ func (c *OllamaClient) SetRateLimiter(limiter interface{}) {
 	if rl, ok := limiter.(RateLimiter); ok {
 		c.rateLimiter = rl
 	}
+}
+
+// SetStatusCallback sets the callback for status updates during operations.
+func (c *OllamaClient) SetStatusCallback(cb StatusCallback) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.statusCallback = cb
 }
 
 // CountTokens estimates tokens for the given contents.

@@ -2,11 +2,18 @@ package ui
 
 import (
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+)
+
+const (
+	// viewportUpdateInterval is the minimum time between viewport updates (60Hz)
+	viewportUpdateInterval = 16 * time.Millisecond
 )
 
 // OutputModel represents the output/viewport component.
@@ -19,6 +26,15 @@ type OutputModel struct {
 	width        int
 	streamParser *MarkdownStreamParser
 	codeBlocks   *CodeBlockRegistry
+
+	// Debouncing for viewport updates (using atomic int64 to avoid copy issues)
+	lastUpdateNano int64 // atomic: last update time in nanoseconds
+	contentDirty   int64 // atomic: 1 if content needs update, 0 otherwise
+
+	// Cached wrapped content to avoid re-wrapping unchanged lines
+	lastContentLen  int
+	cachedWrapped   string
+	lastWrappedLen  int
 }
 
 // NewOutputModel creates a new output model.
@@ -131,7 +147,8 @@ func (m *OutputModel) FlushStream() {
 			m.content.WriteString(block.Content)
 		}
 	}
-	m.updateViewport()
+	// Force update on flush to ensure all content is visible
+	m.ForceUpdateViewport()
 }
 
 // ResetStream resets the stream parser state.
@@ -169,7 +186,11 @@ func (m *OutputModel) AppendMarkdown(text string) {
 // Clear clears the output.
 func (m *OutputModel) Clear() {
 	m.content.Reset()
-	m.updateViewport()
+	// Reset cache on clear
+	m.cachedWrapped = ""
+	m.lastContentLen = 0
+	m.lastWrappedLen = 0
+	m.ForceUpdateViewport()
 }
 
 // SetSize sets the viewport size.
@@ -177,9 +198,16 @@ func (m *OutputModel) SetSize(width, height int) {
 	m.viewport.Width = width
 	m.viewport.Height = height
 	// Use more conservative padding to ensure text never hits the right edge
-	m.width = width - 4
+	newWidth := width - 4
+	// If width changed, invalidate cache for full re-wrap
+	if newWidth != m.width {
+		m.cachedWrapped = ""
+		m.lastContentLen = 0
+		m.lastWrappedLen = 0
+	}
+	m.width = newWidth
 	m.ready = true
-	m.updateViewport()
+	m.ForceUpdateViewport()
 }
 
 // ScrollToBottom scrolls to the bottom of the output.
@@ -188,17 +216,83 @@ func (m *OutputModel) ScrollToBottom() {
 }
 
 func (m *OutputModel) updateViewport() {
-	if m.ready {
-		content := m.content.String()
-		if m.width > 20 {
-			content = wrapText(content, m.width)
-		}
-		m.viewport.SetContent(content)
-		m.viewport.GotoBottom()
+	if !m.ready {
+		return
+	}
+
+	now := time.Now().UnixNano()
+	lastUpdate := atomic.LoadInt64(&m.lastUpdateNano)
+	timeSinceLastUpdate := time.Duration(now - lastUpdate)
+
+	// Debounce: if updated recently, mark as dirty and skip
+	if timeSinceLastUpdate < viewportUpdateInterval {
+		atomic.StoreInt64(&m.contentDirty, 1)
+		return
+	}
+
+	m.doViewportUpdate()
+	atomic.StoreInt64(&m.lastUpdateNano, now)
+	atomic.StoreInt64(&m.contentDirty, 0)
+}
+
+// ForceUpdateViewport forces an immediate viewport update, bypassing debounce.
+// Use sparingly - mainly for final flush operations.
+func (m *OutputModel) ForceUpdateViewport() {
+	if !m.ready {
+		return
+	}
+
+	m.doViewportUpdate()
+	atomic.StoreInt64(&m.lastUpdateNano, time.Now().UnixNano())
+	atomic.StoreInt64(&m.contentDirty, 0)
+}
+
+// FlushPendingUpdate applies any pending viewport update.
+// Called periodically (e.g., on spinner tick) to ensure content is eventually shown.
+func (m *OutputModel) FlushPendingUpdate() {
+	if atomic.LoadInt64(&m.contentDirty) == 1 && m.ready {
+		m.doViewportUpdate()
+		atomic.StoreInt64(&m.lastUpdateNano, time.Now().UnixNano())
+		atomic.StoreInt64(&m.contentDirty, 0)
 	}
 }
 
+// doViewportUpdate performs the actual viewport update with incremental wrapping.
+func (m *OutputModel) doViewportUpdate() {
+	content := m.content.String()
+	contentLen := len(content)
+
+	// Optimization: if content unchanged, skip wrapping
+	if contentLen == m.lastContentLen && m.cachedWrapped != "" {
+		return
+	}
+
+	// Incremental wrapping: only wrap new content if possible
+	var wrapped string
+	if m.width > 20 {
+		if contentLen > m.lastContentLen && m.lastWrappedLen > 0 && m.cachedWrapped != "" {
+			// Append only new content wrapping
+			newContent := content[m.lastContentLen:]
+			newWrapped := wrapText(newContent, m.width)
+			wrapped = m.cachedWrapped + newWrapped
+		} else {
+			// Full re-wrap (on resize, clear, or first time)
+			wrapped = wrapText(content, m.width)
+		}
+	} else {
+		wrapped = content
+	}
+
+	m.cachedWrapped = wrapped
+	m.lastContentLen = contentLen
+	m.lastWrappedLen = len(wrapped)
+
+	m.viewport.SetContent(wrapped)
+	m.viewport.GotoBottom()
+}
+
 // wrapText wraps text to the specified width using lipgloss for ANSI-aware wrapping.
+// Optimized to avoid expensive ANSI parsing when possible.
 func wrapText(text string, width int) string {
 	if width <= 0 {
 		return text
@@ -207,12 +301,34 @@ func wrapText(text string, width int) string {
 	style := lipgloss.NewStyle().Width(width)
 
 	var result strings.Builder
+	// Pre-allocate approximate capacity
+	result.Grow(len(text) + len(text)/width*2)
+
 	lines := strings.Split(text, "\n")
 
 	for i, line := range lines {
 		if i > 0 {
 			result.WriteString("\n")
 		}
+
+		// Fast path: if line is shorter than width in bytes, it's definitely shorter in runes
+		// (since each rune is at least 1 byte). Skip expensive ANSI parsing.
+		if len(line) <= width {
+			result.WriteString(line)
+			continue
+		}
+
+		// Medium path: check if line has ANSI codes. If not, use simple rune count.
+		if !strings.Contains(line, "\x1b[") {
+			if len([]rune(line)) <= width {
+				result.WriteString(line)
+			} else {
+				result.WriteString(style.Render(line))
+			}
+			continue
+		}
+
+		// Slow path: line has ANSI codes, use full lipgloss width calculation
 		if lipgloss.Width(line) > width {
 			result.WriteString(style.Render(line))
 		} else {

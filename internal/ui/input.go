@@ -18,11 +18,21 @@ const (
 	historyFile    = "input_history"
 )
 
+// ArgInfo describes a command argument for autocomplete hints.
+type ArgInfo struct {
+	Name     string   // Argument name (e.g., "message", "filename")
+	Required bool     // True if argument is required
+	Type     string   // "string", "path", "option", "number"
+	Options  []string // Available options for "option" type
+}
+
 // CommandInfo contains information about a slash command for autocomplete.
 type CommandInfo struct {
 	Name        string
 	Description string
 	Category    string
+	Args        []ArgInfo // Command arguments
+	Usage       string    // Usage pattern (e.g., "/copy <n> [filename]")
 }
 
 // InputModel represents the input component.
@@ -38,6 +48,14 @@ type InputModel struct {
 	suggestions     []CommandInfo
 	suggestionIndex int
 	showSuggestions bool
+
+	// Ghost text (inline completion hint)
+	ghostText    string // Suggested completion shown in dim color
+	ghostEnabled bool   // Whether ghost text is enabled
+
+	// Argument hints
+	showArgHints   bool         // Show argument hints after command
+	currentCommand *CommandInfo // Current command for arg hints
 
 	// History search (Ctrl+R)
 	historySearchMode   bool
@@ -68,6 +86,8 @@ func NewInputModel(styles *Styles) InputModel {
 		suggestions:        nil,
 		suggestionIndex:    0,
 		showSuggestions:    false,
+		ghostText:          "",
+		ghostEnabled:       true, // Enable ghost text by default
 		historySearchIndex: -1,
 	}
 }
@@ -79,18 +99,52 @@ func defaultCommands() []CommandInfo {
 		{Name: "help", Description: "Show help for commands", Category: "Session"},
 		{Name: "clear", Description: "Clear conversation history", Category: "Session"},
 		{Name: "compact", Description: "Force context compaction", Category: "Session"},
-		{Name: "save", Description: "Save current session", Category: "Session"},
-		{Name: "resume", Description: "Resume a saved session", Category: "Session"},
+		{
+			Name:        "save",
+			Description: "Save current session",
+			Category:    "Session",
+			Args:        []ArgInfo{{Name: "name", Required: false, Type: "string"}},
+			Usage:       "/save [name]",
+		},
+		{
+			Name:        "resume",
+			Description: "Resume a saved session",
+			Category:    "Session",
+			Args:        []ArgInfo{{Name: "session", Required: true, Type: "string"}},
+			Usage:       "/resume <session>",
+		},
 		{Name: "sessions", Description: "List saved sessions", Category: "Session"},
 
 		// History commands
 		{Name: "undo", Description: "Undo the last file change", Category: "History"},
-		{Name: "checkpoint", Description: "Create a checkpoint", Category: "History"},
+		{
+			Name:        "checkpoint",
+			Description: "Create a checkpoint",
+			Category:    "History",
+			Args:        []ArgInfo{{Name: "name", Required: false, Type: "string"}},
+			Usage:       "/checkpoint [name]",
+		},
 		{Name: "checkpoints", Description: "List all checkpoints", Category: "History"},
-		{Name: "restore", Description: "Restore a checkpoint", Category: "History"},
+		{
+			Name:        "restore",
+			Description: "Restore a checkpoint",
+			Category:    "History",
+			Args:        []ArgInfo{{Name: "checkpoint", Required: true, Type: "string"}},
+			Usage:       "/restore <checkpoint>",
+		},
 
 		// Git commands
 		{Name: "init", Description: "Initialize GOKIN.md", Category: "Git"},
+		{
+			Name:        "commit",
+			Description: "Commit changes",
+			Category:    "Git",
+			Args: []ArgInfo{
+				{Name: "message", Required: true, Type: "string"},
+				{Name: "--amend", Required: false, Type: "option"},
+			},
+			Usage: "/commit <message> [--amend]",
+		},
 
 		// Auth commands
 		{Name: "login", Description: "Login with API key or OAuth", Category: "Auth"},
@@ -101,6 +155,23 @@ func defaultCommands() []CommandInfo {
 		{Name: "doctor", Description: "Check environment", Category: "Utility"},
 		{Name: "config", Description: "Show configuration", Category: "Utility"},
 		{Name: "cost", Description: "Show token usage", Category: "Utility"},
+		{
+			Name:        "copy",
+			Description: "Copy code block to clipboard",
+			Category:    "Utility",
+			Args: []ArgInfo{
+				{Name: "n", Required: false, Type: "number"},
+				{Name: "filename", Required: false, Type: "path"},
+			},
+			Usage: "/copy [n] [filename]",
+		},
+		{
+			Name:        "browse",
+			Description: "Open file browser",
+			Category:    "Utility",
+			Args:        []ArgInfo{{Name: "path", Required: false, Type: "path"}},
+			Usage:       "/browse [path]",
+		},
 	}
 }
 
@@ -127,8 +198,66 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 			m.historySearchIndex = len(m.history)
 			return m, nil
 
-		case tea.KeyTab, tea.KeyEnter:
-			// Handle autocomplete
+		case tea.KeyTab:
+			// Accept ghost text if visible (and no dropdown)
+			if m.ghostText != "" && !m.showSuggestions {
+				m.textarea.SetValue(m.textarea.Value() + m.ghostText)
+				m.textarea.CursorEnd()
+				m.ghostText = ""
+				// Check if we should show arg hints
+				value := m.textarea.Value()
+				if strings.HasPrefix(value, "/") && strings.HasSuffix(value, " ") {
+					cmdName := strings.TrimPrefix(strings.TrimSuffix(value, " "), "/")
+					for _, cmd := range m.commands {
+						if strings.EqualFold(cmd.Name, cmdName) && len(cmd.Args) > 0 {
+							m.showArgHints = true
+							m.currentCommand = &cmd
+							break
+						}
+					}
+				}
+				return m, nil
+			}
+
+			// Accept suggestion from dropdown
+			if m.showSuggestions && len(m.suggestions) > 0 {
+				selected := m.suggestions[m.suggestionIndex]
+				m.textarea.SetValue("/" + selected.Name + " ")
+				m.textarea.CursorEnd()
+				m.showSuggestions = false
+				m.suggestions = nil
+				m.ghostText = ""
+				// Show arg hints if command has arguments
+				if len(selected.Args) > 0 {
+					m.showArgHints = true
+					m.currentCommand = &selected
+				}
+				return m, nil
+			}
+
+			// Try to trigger suggestions
+			value := m.textarea.Value()
+			if strings.HasPrefix(value, "/") && !strings.Contains(value, " ") {
+				m.updateSuggestions(value)
+				if len(m.suggestions) == 1 {
+					// Auto-complete if only one match
+					selected := m.suggestions[0]
+					m.textarea.SetValue("/" + selected.Name + " ")
+					m.textarea.CursorEnd()
+					m.showSuggestions = false
+					m.suggestions = nil
+					m.ghostText = ""
+					// Show arg hints
+					if len(selected.Args) > 0 {
+						m.showArgHints = true
+						m.currentCommand = &selected
+					}
+				}
+			}
+			return m, nil
+
+		case tea.KeyEnter:
+			// Handle autocomplete on Enter
 			if m.showSuggestions && len(m.suggestions) > 0 {
 				// Accept current suggestion
 				selected := m.suggestions[m.suggestionIndex]
@@ -136,20 +265,11 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 				m.textarea.CursorEnd()
 				m.showSuggestions = false
 				m.suggestions = nil
-				return m, nil
-			}
-			// If Tab but no suggestions, try to trigger suggestions
-			if msg.Type == tea.KeyTab {
-				value := m.textarea.Value()
-				if strings.HasPrefix(value, "/") {
-					m.updateSuggestions(value)
-					if len(m.suggestions) == 1 {
-						// Auto-complete if only one match
-						m.textarea.SetValue("/" + m.suggestions[0].Name + " ")
-						m.textarea.CursorEnd()
-						m.showSuggestions = false
-						m.suggestions = nil
-					}
+				m.ghostText = ""
+				// Show arg hints
+				if len(selected.Args) > 0 {
+					m.showArgHints = true
+					m.currentCommand = &selected
 				}
 				return m, nil
 			}
@@ -197,10 +317,13 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 			return m, nil
 
 		case tea.KeyEscape:
-			// Cancel suggestions
-			if m.showSuggestions {
+			// Cancel suggestions and ghost text
+			if m.showSuggestions || m.ghostText != "" || m.showArgHints {
 				m.showSuggestions = false
 				m.suggestions = nil
+				m.ghostText = ""
+				m.showArgHints = false
+				m.currentCommand = nil
 				return m, nil
 			}
 		}
@@ -213,9 +336,18 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 		value := m.textarea.Value()
 		if strings.HasPrefix(value, "/") && !strings.Contains(value, " ") {
 			m.updateSuggestions(value)
+			// Clear arg hints when typing command
+			m.showArgHints = false
+			m.currentCommand = nil
 		} else {
 			m.showSuggestions = false
 			m.suggestions = nil
+			m.ghostText = ""
+			// Clear arg hints when not in command context
+			if !strings.HasPrefix(value, "/") {
+				m.showArgHints = false
+				m.currentCommand = nil
+			}
 		}
 
 		return m, cmd
@@ -294,26 +426,124 @@ func (m *InputModel) searchHistory() {
 	m.historySearchResult = ""
 }
 
-// updateSuggestions updates the autocomplete suggestions.
+// fuzzyScore calculates a fuzzy match score for a query against a string.
+// Returns 0 if no match, higher score for better matches.
+func fuzzyScore(str, query string) int {
+	str = strings.ToLower(str)
+	query = strings.ToLower(query)
+
+	if query == "" {
+		return 0
+	}
+
+	score := 0
+	qi := 0
+	lastMatchIdx := -1
+	consecutiveBonus := 0
+
+	for i := 0; i < len(str) && qi < len(query); i++ {
+		if str[i] == query[qi] {
+			qi++
+			score += 10 // Base score for each match
+
+			// Bonus for consecutive matches
+			if lastMatchIdx == i-1 {
+				consecutiveBonus++
+				score += consecutiveBonus * 5
+			} else {
+				consecutiveBonus = 0
+			}
+
+			// Bonus for match at start
+			if i == 0 {
+				score += 20
+			}
+
+			// Bonus for match after separator (like camelCase or word boundary)
+			if i > 0 && (str[i-1] == '-' || str[i-1] == '_' || str[i-1] == ' ') {
+				score += 15
+			}
+
+			lastMatchIdx = i
+		}
+	}
+
+	// All query characters must be matched
+	if qi == len(query) {
+		return score
+	}
+	return 0
+}
+
+// scoredCommand holds a command with its match score.
+type scoredCommand struct {
+	cmd   CommandInfo
+	score int
+}
+
+// updateSuggestions updates the autocomplete suggestions with fuzzy matching.
 func (m *InputModel) updateSuggestions(input string) {
 	prefix := strings.TrimPrefix(input, "/")
 	prefix = strings.ToLower(prefix)
 
-	var matches []CommandInfo
+	var scored []scoredCommand
+
 	for _, cmd := range m.commands {
-		if strings.HasPrefix(strings.ToLower(cmd.Name), prefix) {
-			matches = append(matches, cmd)
+		cmdLower := strings.ToLower(cmd.Name)
+
+		// Exact prefix match gets highest priority
+		if strings.HasPrefix(cmdLower, prefix) {
+			scored = append(scored, scoredCommand{
+				cmd:   cmd,
+				score: 1000 + (100 - len(cmd.Name)), // Shorter names rank higher
+			})
+			continue
+		}
+
+		// Fuzzy match
+		if score := fuzzyScore(cmd.Name, prefix); score > 0 {
+			scored = append(scored, scoredCommand{cmd: cmd, score: score})
 		}
 	}
 
-	// Sort by name
-	sort.Slice(matches, func(i, j int) bool {
-		return matches[i].Name < matches[j].Name
+	// Sort by score (descending), then by name (ascending)
+	sort.Slice(scored, func(i, j int) bool {
+		if scored[i].score != scored[j].score {
+			return scored[i].score > scored[j].score
+		}
+		return scored[i].cmd.Name < scored[j].cmd.Name
 	})
 
-	m.suggestions = matches
+	// Extract commands
+	m.suggestions = make([]CommandInfo, 0, len(scored))
+	for _, sc := range scored {
+		m.suggestions = append(m.suggestions, sc.cmd)
+	}
+
 	m.suggestionIndex = 0
-	m.showSuggestions = len(matches) > 0
+	m.showSuggestions = len(m.suggestions) > 0
+
+	// Update ghost text with top suggestion
+	m.updateGhostText(prefix)
+}
+
+// updateGhostText updates the ghost text based on current input and suggestions.
+func (m *InputModel) updateGhostText(prefix string) {
+	if !m.ghostEnabled || len(m.suggestions) == 0 {
+		m.ghostText = ""
+		return
+	}
+
+	topCmd := m.suggestions[0]
+	cmdLower := strings.ToLower(topCmd.Name)
+	prefixLower := strings.ToLower(prefix)
+
+	// Only show ghost text for prefix matches (not fuzzy matches)
+	if strings.HasPrefix(cmdLower, prefixLower) && len(topCmd.Name) > len(prefix) {
+		m.ghostText = topCmd.Name[len(prefix):]
+	} else {
+		m.ghostText = ""
+	}
 }
 
 // View renders the input component.
@@ -348,10 +578,54 @@ func (m InputModel) View() string {
 		result.WriteString("\n")
 	}
 
-	// Input field
-	result.WriteString(m.styles.Input.Render(m.textarea.View()))
+	// Show argument hints after command
+	if m.showArgHints && m.currentCommand != nil && len(m.currentCommand.Args) > 0 {
+		argHints := m.renderArgHints()
+		result.WriteString(argHints)
+		result.WriteString("\n")
+	}
+
+	// Input field with ghost text
+	inputView := m.textarea.View()
+	if m.ghostText != "" && m.ghostEnabled && !m.showSuggestions {
+		// Render ghost text inline (after input)
+		ghostStyle := lipgloss.NewStyle().Foreground(ColorDim)
+		inputView = inputView + ghostStyle.Render(m.ghostText)
+	}
+	result.WriteString(m.styles.Input.Render(inputView))
 
 	return result.String()
+}
+
+// renderArgHints renders argument hints for the current command.
+func (m InputModel) renderArgHints() string {
+	if m.currentCommand == nil || len(m.currentCommand.Args) == 0 {
+		return ""
+	}
+
+	var builder strings.Builder
+
+	hintStyle := lipgloss.NewStyle().Foreground(ColorDim)
+	reqStyle := lipgloss.NewStyle().Foreground(ColorWarning) // Amber for required
+	optStyle := lipgloss.NewStyle().Foreground(ColorMuted)   // Gray for optional
+
+	builder.WriteString(hintStyle.Render("  Usage: /"))
+	builder.WriteString(hintStyle.Render(m.currentCommand.Name))
+	builder.WriteString(" ")
+
+	for i, arg := range m.currentCommand.Args {
+		if i > 0 {
+			builder.WriteString(" ")
+		}
+
+		if arg.Required {
+			builder.WriteString(reqStyle.Render("<" + arg.Name + ">"))
+		} else {
+			builder.WriteString(optStyle.Render("[" + arg.Name + "]"))
+		}
+	}
+
+	return builder.String()
 }
 
 // renderSuggestions renders the autocomplete suggestion box.

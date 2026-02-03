@@ -30,15 +30,33 @@ func (a *App) promptPermission(ctx context.Context, req *permission.Request) (pe
 		Reason:    req.Reason,
 	})
 
-	// Wait for response from TUI with timeout to prevent deadlock
-	select {
-	case decision := <-a.permResponseChan:
-		return decision, nil
-	case <-ctx.Done():
-		return permission.DecisionDeny, ctx.Err()
-	case <-time.After(PermissionTimeout):
-		logging.Warn("permission prompt timed out", "tool", req.ToolName)
-		return permission.DecisionDeny, fmt.Errorf("permission prompt timed out after %v", PermissionTimeout)
+	// Warning timer - remind user after 30 seconds, then every 60 seconds
+	const warningDelay = 30 * time.Second
+	const repeatDelay = 60 * time.Second
+	warningTimer := time.NewTimer(warningDelay)
+	defer warningTimer.Stop()
+
+	// Wait for response from TUI with timeout and periodic warnings
+	for {
+		select {
+		case decision := <-a.permResponseChan:
+			return decision, nil
+		case <-ctx.Done():
+			return permission.DecisionDeny, ctx.Err()
+		case <-warningTimer.C:
+			// Send warning to UI
+			if a.program != nil {
+				a.program.Send(ui.StatusUpdateMsg{
+					Type:    ui.StatusStreamIdle,
+					Message: fmt.Sprintf("Ожидание разрешения для %s...", req.ToolName),
+				})
+			}
+			// Reset timer for next reminder
+			warningTimer.Reset(repeatDelay)
+		case <-time.After(PermissionTimeout):
+			logging.Warn("permission prompt timed out", "tool", req.ToolName)
+			return permission.DecisionDeny, fmt.Errorf("permission prompt timed out after %v", PermissionTimeout)
+		}
 	}
 }
 

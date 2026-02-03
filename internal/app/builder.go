@@ -413,6 +413,16 @@ func (b *Builder) initManagers() error {
 		} else {
 			b.planManager.SetPlanStore(planStore)
 			logging.Debug("plan store initialized", "dir", b.configDir)
+
+			// Auto-load most recent resumable plan (but don't execute)
+			if loadedPlan, err := b.planManager.LoadPausedPlan(); err == nil && loadedPlan != nil {
+				logging.Debug("loaded resumable plan from previous session",
+					"id", loadedPlan.ID,
+					"title", loadedPlan.Title,
+					"status", loadedPlan.Status,
+					"pending_steps", loadedPlan.PendingCount(),
+				)
+			}
 		}
 	}
 
@@ -1029,6 +1039,18 @@ func (b *Builder) initUI() error {
 func (b *Builder) wireDependencies() error {
 	app := b.assembleApp()
 
+	// Set up status callback for clients
+	statusCb := &appStatusCallback{app: app}
+	if gc, ok := b.geminiClient.(*client.GeminiClient); ok {
+		gc.SetStatusCallback(statusCb)
+	}
+	if ac, ok := b.geminiClient.(*client.AnthropicClient); ok {
+		ac.SetStatusCallback(statusCb)
+	}
+	if oc, ok := b.geminiClient.(*client.OllamaClient); ok {
+		oc.SetStatusCallback(statusCb)
+	}
+
 	// Set up executor handler
 	b.executor.SetHandler(&tools.ExecutionHandler{
 		OnText: func(text string) {
@@ -1159,6 +1181,19 @@ func (b *Builder) wireDependencies() error {
 
 		if app.program != nil {
 			app.program.Send(ui.ScratchpadMsg(content))
+		}
+	})
+
+	// Wire sub-agent activity to UI
+	b.agentRunner.SetOnSubAgentActivity(func(agentID, agentType, toolName string, args map[string]any, status string) {
+		if app.program != nil {
+			app.program.Send(ui.SubAgentActivityMsg{
+				AgentID:   agentID,
+				AgentType: agentType,
+				ToolName:  toolName,
+				ToolArgs:  args,
+				Status:    status,
+			})
 		}
 	})
 

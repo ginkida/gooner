@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"gokin/internal/highlight"
 )
 
 // FileBrowserAction represents user actions in the file browser.
@@ -66,6 +67,19 @@ type FileBrowserModel struct {
 	errorMsg     string
 	errorTimeout int // Countdown ticks to clear error
 
+	// Preview panel
+	previewEnabled    bool
+	previewContent    string
+	previewFilePath   string
+	previewViewport   viewport.Model
+	previewHighlighter *highlight.Highlighter
+	previewMaxLines   int  // Max lines to preview (default: 100)
+	previewLoadError  string
+
+	// Split dimensions
+	listWidth    int
+	previewWidth int
+
 	// Callback for actions
 	onAction func(action FileBrowserAction, path string, files []string)
 }
@@ -75,11 +89,18 @@ func NewFileBrowserModel(styles *Styles) FileBrowserModel {
 	vp := viewport.New(60, 20)
 	vp.MouseWheelEnabled = true
 
+	previewVp := viewport.New(60, 20)
+	previewVp.MouseWheelEnabled = true
+
 	return FileBrowserModel{
-		viewport:      vp,
-		styles:        styles,
-		selectedFiles: make(map[string]bool),
-		showHidden:    false,
+		viewport:           vp,
+		styles:             styles,
+		selectedFiles:      make(map[string]bool),
+		showHidden:         false,
+		previewEnabled:     false,
+		previewViewport:    previewVp,
+		previewHighlighter: highlight.New("monokai"),
+		previewMaxLines:    100,
 	}
 }
 
@@ -93,8 +114,18 @@ func (m *FileBrowserModel) SetSize(width, height int) {
 	}
 	m.width = width
 	m.height = height
-	m.viewport.Width = width - 4
+
+	// Calculate split widths
+	if m.previewEnabled {
+		m.listWidth = width * 40 / 100
+		m.previewWidth = width - m.listWidth - 5
+		m.viewport.Width = m.listWidth - 4
+		m.previewViewport.Width = m.previewWidth - 4
+	} else {
+		m.viewport.Width = width - 4
+	}
 	m.viewport.Height = height - 10
+	m.previewViewport.Height = height - 10
 }
 
 // SetPath sets the current directory path.
@@ -189,6 +220,67 @@ func (m *FileBrowserModel) loadEntries() error {
 // SetActionCallback sets the callback for user actions.
 func (m *FileBrowserModel) SetActionCallback(callback func(FileBrowserAction, string, []string)) {
 	m.onAction = callback
+}
+
+// loadPreview loads and highlights file content for preview.
+func (m *FileBrowserModel) loadPreview(entry FileEntry) {
+	m.previewLoadError = ""
+	m.previewContent = ""
+	m.previewFilePath = ""
+
+	if entry.IsDir || entry.Name == ".." {
+		m.previewContent = ""
+		return
+	}
+
+	// Size check (max 1MB)
+	const maxPreviewSize = 1024 * 1024
+	if entry.Size > maxPreviewSize {
+		m.previewLoadError = "File too large for preview"
+		return
+	}
+
+	content, err := os.ReadFile(entry.Path)
+	if err != nil {
+		m.previewLoadError = fmt.Sprintf("Cannot read: %s", err.Error())
+		return
+	}
+
+	// Binary check
+	if isBinaryContent(content) {
+		m.previewLoadError = "Binary file"
+		return
+	}
+
+	// Truncate to maxLines
+	lines := strings.Split(string(content), "\n")
+	if len(lines) > m.previewMaxLines {
+		lines = lines[:m.previewMaxLines]
+		lines = append(lines, fmt.Sprintf("... (%d more lines)", len(strings.Split(string(content), "\n"))-m.previewMaxLines))
+	}
+
+	// Detect language and highlight
+	lang := m.previewHighlighter.DetectLanguage(entry.Name)
+	m.previewContent = m.previewHighlighter.HighlightWithLineNumbers(
+		strings.Join(lines, "\n"), lang, 1,
+	)
+	m.previewFilePath = entry.Path
+	m.previewViewport.SetContent(m.previewContent)
+	m.previewViewport.GotoTop()
+}
+
+// isBinaryContent checks if content is binary by looking for null bytes.
+func isBinaryContent(content []byte) bool {
+	checkLen := 512
+	if len(content) < checkLen {
+		checkLen = len(content)
+	}
+	for i := 0; i < checkLen; i++ {
+		if content[i] == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // updateViewport updates the viewport content.
@@ -418,12 +510,20 @@ func (m FileBrowserModel) Update(msg tea.Msg) (FileBrowserModel, tea.Cmd) {
 			if m.selectedIndex < len(m.entries)-1 {
 				m.selectedIndex++
 				m.updateViewport()
+				// Update preview if enabled
+				if m.previewEnabled && m.selectedIndex < len(m.entries) {
+					m.loadPreview(m.entries[m.selectedIndex])
+				}
 			}
 
 		case "k", "up":
 			if m.selectedIndex > 0 {
 				m.selectedIndex--
 				m.updateViewport()
+				// Update preview if enabled
+				if m.previewEnabled && m.selectedIndex < len(m.entries) {
+					m.loadPreview(m.entries[m.selectedIndex])
+				}
 			}
 
 		case "l", "enter", "right":
@@ -483,14 +583,39 @@ func (m FileBrowserModel) Update(msg tea.Msg) (FileBrowserModel, tea.Cmd) {
 			m.showHidden = !m.showHidden
 			m.loadEntries()
 
+		case "p":
+			// Toggle preview panel
+			m.previewEnabled = !m.previewEnabled
+			if m.previewEnabled && len(m.entries) > 0 && m.selectedIndex < len(m.entries) {
+				m.loadPreview(m.entries[m.selectedIndex])
+			}
+
+		case "ctrl+j":
+			// Scroll preview down
+			if m.previewEnabled {
+				m.previewViewport.LineDown(3)
+			}
+
+		case "ctrl+k":
+			// Scroll preview up
+			if m.previewEnabled {
+				m.previewViewport.LineUp(3)
+			}
+
 		case "g":
 			m.selectedIndex = 0
 			m.updateViewport()
+			if m.previewEnabled && len(m.entries) > 0 {
+				m.loadPreview(m.entries[0])
+			}
 
 		case "G":
 			if len(m.entries) > 0 {
 				m.selectedIndex = len(m.entries) - 1
 				m.updateViewport()
+				if m.previewEnabled {
+					m.loadPreview(m.entries[m.selectedIndex])
+				}
 			}
 
 		case "~":
@@ -593,19 +718,74 @@ func (m FileBrowserModel) View() string {
 
 	builder.WriteString("\n")
 
-	// Content viewport
-	borderStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ColorBorder).
-		Padding(0, 1)
-
-	builder.WriteString(borderStyle.Render(m.viewport.View()))
+	// Content area - split view or single view
+	if m.previewEnabled {
+		builder.WriteString(m.renderSplitView())
+	} else {
+		borderStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorBorder).
+			Padding(0, 1)
+		builder.WriteString(borderStyle.Render(m.viewport.View()))
+	}
 	builder.WriteString("\n\n")
 
 	// Footer with actions
 	m.renderActions(&builder)
 
 	return builder.String()
+}
+
+// renderSplitView renders the file browser with a preview panel.
+func (m FileBrowserModel) renderSplitView() string {
+	// Calculate widths: 40% list, 60% preview
+	listWidth := m.width * 40 / 100
+	if listWidth < 30 {
+		listWidth = 30
+	}
+	previewWidth := m.width - listWidth - 5 // Account for separator and borders
+	if previewWidth < 30 {
+		previewWidth = 30
+	}
+
+	borderStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(ColorBorder).
+		Padding(0, 1)
+
+	// Left panel: file list
+	leftPanel := borderStyle.Width(listWidth).Render(m.viewport.View())
+
+	// Right panel: preview
+	var previewContent string
+	if m.previewLoadError != "" {
+		errorStyle := lipgloss.NewStyle().
+			Foreground(ColorDim).
+			Italic(true)
+		previewContent = errorStyle.Render(m.previewLoadError)
+	} else if m.previewContent != "" {
+		previewContent = m.previewViewport.View()
+	} else {
+		dimStyle := lipgloss.NewStyle().
+			Foreground(ColorDim).
+			Italic(true)
+		previewContent = dimStyle.Render("Select a file to preview")
+	}
+
+	// Preview header
+	previewHeader := ""
+	if m.previewFilePath != "" {
+		headerStyle := lipgloss.NewStyle().
+			Foreground(ColorHighlight).
+			Bold(true)
+		fileName := filepath.Base(m.previewFilePath)
+		previewHeader = headerStyle.Render(fileName) + "\n" + strings.Repeat("─", previewWidth-2) + "\n"
+	}
+
+	rightPanel := borderStyle.Width(previewWidth).Render(previewHeader + previewContent)
+
+	// Join horizontally
+	return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, " ", rightPanel)
 }
 
 // renderActions renders the available actions.
@@ -618,15 +798,19 @@ func (m *FileBrowserModel) renderActions(builder *strings.Builder) {
 	hints := []string{
 		keyStyle.Render("Enter") + " Open",
 		keyStyle.Render("Space") + " Select",
+		keyStyle.Render("p") + " Preview",
 		keyStyle.Render("/") + " Filter",
 		keyStyle.Render(".") + " Hidden",
-		keyStyle.Render("~") + " Home",
 		keyStyle.Render("q") + " Close",
 	}
 
 	builder.WriteString(hintStyle.Render(strings.Join(hints, "  │  ")))
 	builder.WriteString("\n")
-	builder.WriteString(hintStyle.Render("h/l: Navigate  │  j/k: Move  │  y: Confirm selection"))
+	if m.previewEnabled {
+		builder.WriteString(hintStyle.Render("h/l: Navigate  │  j/k: Move  │  Ctrl+j/k: Scroll preview  │  y: Confirm"))
+	} else {
+		builder.WriteString(hintStyle.Render("h/l: Navigate  │  j/k: Move  │  ~: Home  │  y: Confirm selection"))
+	}
 }
 
 // GetCurrentPath returns the current directory path.

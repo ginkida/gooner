@@ -18,13 +18,14 @@ import (
 
 // GeminiClient wraps the Google Gemini API.
 type GeminiClient struct {
-	client      *genai.Client
-	model       string
-	config      *genai.GenerateContentConfig
-	tools       []*genai.Tool
-	rateLimiter *ratelimit.Limiter
-	maxRetries  int           // Maximum number of retry attempts (default: 3)
-	retryDelay  time.Duration // Initial delay between retries (default: 1s)
+	client         *genai.Client
+	model          string
+	config         *genai.GenerateContentConfig
+	tools          []*genai.Tool
+	rateLimiter    *ratelimit.Limiter
+	maxRetries     int            // Maximum number of retry attempts (default: 3)
+	retryDelay     time.Duration  // Initial delay between retries (default: 1s)
+	statusCallback StatusCallback // Optional callback for status updates
 }
 
 // NewGeminiClient creates a new Gemini API client (returns Client interface).
@@ -90,6 +91,11 @@ func (c *GeminiClient) SetRateLimiter(limiter interface{}) {
 	if rl, ok := limiter.(*ratelimit.Limiter); ok {
 		c.rateLimiter = rl
 	}
+}
+
+// SetStatusCallback sets the callback for status updates during operations.
+func (c *GeminiClient) SetStatusCallback(cb StatusCallback) {
+	c.statusCallback = cb
 }
 
 // SendMessage sends a user message and returns a streaming response.
@@ -229,6 +235,26 @@ func (c *GeminiClient) generateContentStream(ctx context.Context, contents []*ge
 			// Exponential backoff with jitter
 			delay := c.retryDelay * time.Duration(1<<uint(attempt-1))
 			logging.Info("retrying Gemini request", "attempt", attempt, "delay", delay)
+
+			// Notify UI about retry
+			if c.statusCallback != nil {
+				reason := "API error"
+				if lastErr != nil {
+					reason = lastErr.Error()
+					// Shorten common error patterns
+					if strings.Contains(reason, "429") {
+						reason = "rate limit"
+					} else if strings.Contains(reason, "connection") {
+						reason = "connection error"
+					} else if strings.Contains(reason, "timeout") {
+						reason = "timeout"
+					} else if len(reason) > 50 {
+						reason = reason[:47] + "..."
+					}
+				}
+				c.statusCallback.OnRetry(attempt, c.maxRetries, delay, reason)
+			}
+
 			select {
 			case <-time.After(delay):
 			case <-ctx.Done():
@@ -254,6 +280,17 @@ func (c *GeminiClient) generateContentStream(ctx context.Context, contents []*ge
 	return nil, fmt.Errorf("max retries (%d) exceeded: %w", c.maxRetries, lastErr)
 }
 
+// resetTimer safely resets a timer to a new duration.
+func resetTimer(t *time.Timer, d time.Duration) {
+	if !t.Stop() {
+		select {
+		case <-t.C:
+		default:
+		}
+	}
+	t.Reset(d)
+}
+
 // doGenerateContentStream performs a single streaming request attempt.
 func (c *GeminiClient) doGenerateContentStream(ctx context.Context, contents []*genai.Content) (*StreamingResponse, error) {
 	// Track tokens for potential return on error
@@ -261,6 +298,10 @@ func (c *GeminiClient) doGenerateContentStream(ctx context.Context, contents []*
 	if c.rateLimiter != nil {
 		estimatedTokens = ratelimit.EstimateTokensFromContents(len(contents), 500)
 		if err := c.rateLimiter.AcquireWithContext(ctx, estimatedTokens); err != nil {
+			// Notify about rate limit
+			if c.statusCallback != nil {
+				c.statusCallback.OnRateLimit(5 * time.Second) // Estimate wait time
+			}
 			return nil, fmt.Errorf("rate limit: %w", err)
 		}
 	}
@@ -275,9 +316,15 @@ func (c *GeminiClient) doGenerateContentStream(ctx context.Context, contents []*
 	chunks := make(chan ResponseChunk, 10)
 	done := make(chan struct{})
 
+	// Stream idle timeout and warning
+	const streamIdleTimeout = 30 * time.Second
+	const streamIdleWarning = 15 * time.Second
+
 	// Capture rate limiter and estimated tokens for the goroutine
 	rateLimiter := c.rateLimiter
 	estimatedForGoroutine := estimatedTokens
+	// Capture status callback for goroutine
+	statusCb := c.statusCallback
 
 	go func() {
 		defer close(chunks)
@@ -300,49 +347,96 @@ func (c *GeminiClient) doGenerateContentStream(ctx context.Context, contents []*
 			}
 		}()
 
+		// Timers for idle detection
+		idleTimer := time.NewTimer(streamIdleTimeout)
+		defer idleTimer.Stop()
+		warningTimer := time.NewTimer(streamIdleWarning)
+		defer warningTimer.Stop()
+		lastWarningAt := time.Duration(0)
+
 		// Process iterator results with context checking
 	streamLoop:
 		for {
-			// Check for context cancellation BEFORE waiting for next chunk
-			select {
-			case <-ctx.Done():
-				hasError = true
-				chunks <- ResponseChunk{Error: ctx.Err(), Done: true}
-				return
-			case result, ok := <-iterCh:
-				if !ok {
-					// Iterator channel closed, stream complete
-					break streamLoop
-				}
-
-				if result.err != nil {
-					hasError = true
-					select {
-					case chunks <- ResponseChunk{Error: result.err, Done: true}:
-					case <-ctx.Done():
-					}
-					break streamLoop
-				}
-
-				// Check for end of stream
-				if result.resp == nil {
-					// Stream completed successfully
-					break streamLoop
-				}
-
-				chunk := processResponse(result.resp)
-
-				// Use select to prevent goroutine leak if receiver stops reading
+		waitLoop:
+			for {
 				select {
-				case chunks <- chunk:
 				case <-ctx.Done():
-					hasError = true // Treat context cancellation as error for token return
+					hasError = true
 					chunks <- ResponseChunk{Error: ctx.Err(), Done: true}
 					return
-				}
 
-				if chunk.Done {
-					break streamLoop
+				case <-warningTimer.C:
+					// Stream idle warning - notify UI
+					lastWarningAt += streamIdleWarning
+					if statusCb != nil {
+						statusCb.OnStreamIdle(lastWarningAt)
+					}
+					// Reset for next warning (every 10 seconds after first)
+					warningTimer.Reset(10 * time.Second)
+					continue waitLoop
+
+				case <-idleTimer.C:
+					// Stream idle timeout - fail the stream
+					hasError = true
+					logging.Warn("stream idle timeout exceeded", "timeout", streamIdleTimeout)
+					chunks <- ResponseChunk{
+						Error: fmt.Errorf("stream idle timeout: no data received for %v", streamIdleTimeout),
+						Done:  true,
+					}
+					return
+
+				case result, ok := <-iterCh:
+					// Got data - notify resume if we had warned
+					if lastWarningAt > 0 && statusCb != nil {
+						statusCb.OnStreamResume()
+					}
+					lastWarningAt = 0
+
+					// Reset timers
+					resetTimer(idleTimer, streamIdleTimeout)
+					resetTimer(warningTimer, streamIdleWarning)
+
+					if !ok {
+						// Iterator channel closed, stream complete
+						break streamLoop
+					}
+
+					if result.err != nil {
+						hasError = true
+						// Notify about recoverable error if applicable
+						if c.isRetryableError(result.err) && statusCb != nil {
+							statusCb.OnError(result.err, true)
+						}
+						select {
+						case chunks <- ResponseChunk{Error: result.err, Done: true}:
+						case <-ctx.Done():
+						}
+						break streamLoop
+					}
+
+					// Check for end of stream
+					if result.resp == nil {
+						// Stream completed successfully
+						break streamLoop
+					}
+
+					chunk := processResponse(result.resp)
+
+					// Use select to prevent goroutine leak if receiver stops reading
+					select {
+					case chunks <- chunk:
+					case <-ctx.Done():
+						hasError = true // Treat context cancellation as error for token return
+						chunks <- ResponseChunk{Error: ctx.Err(), Done: true}
+						return
+					}
+
+					if chunk.Done {
+						break streamLoop
+					}
+
+					// Continue to next iteration of streamLoop
+					break waitLoop
 				}
 			}
 		}
@@ -412,6 +506,19 @@ func (c *GeminiClient) CountTokens(ctx context.Context, contents []*genai.Conten
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
 			delay := c.retryDelay * time.Duration(1<<uint(attempt-1))
+
+			// Notify UI about retry
+			if c.statusCallback != nil {
+				reason := "token count failed"
+				if lastErr != nil {
+					reason = lastErr.Error()
+					if len(reason) > 50 {
+						reason = reason[:47] + "..."
+					}
+				}
+				c.statusCallback.OnRetry(attempt, c.maxRetries, delay, reason)
+			}
+
 			select {
 			case <-time.After(delay):
 			case <-ctx.Done():
@@ -448,13 +555,14 @@ func (c *GeminiClient) SetModel(modelName string) {
 // WithModel returns a new client configured for the specified model.
 func (c *GeminiClient) WithModel(modelName string) Client {
 	return &GeminiClient{
-		client:      c.client,
-		model:       modelName,
-		config:      c.config,
-		tools:       c.tools,
-		rateLimiter: c.rateLimiter,
-		maxRetries:  c.maxRetries,
-		retryDelay:  c.retryDelay,
+		client:         c.client,
+		model:          modelName,
+		config:         c.config,
+		tools:          c.tools,
+		rateLimiter:    c.rateLimiter,
+		maxRetries:     c.maxRetries,
+		retryDelay:     c.retryDelay,
+		statusCallback: c.statusCallback,
 	}
 }
 

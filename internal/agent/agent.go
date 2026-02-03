@@ -90,6 +90,9 @@ type Agent struct {
 
 	// Agent Scratchpad (Phase 7)
 	Scratchpad string
+
+	// Tool activity callback for UI updates
+	onToolActivity func(agentID, toolName string, args map[string]any, status string)
 }
 
 // NewAgent creates a new agent with the specified type and filtered tools.
@@ -254,6 +257,11 @@ func (a *Agent) SetOnText(onText func(string)) {
 // SetOnScratchpadUpdate sets the callback for scratchpad updates.
 func (a *Agent) SetOnScratchpadUpdate(fn func(string)) {
 	a.onScratchpadUpdate = fn
+}
+
+// SetOnToolActivity sets the callback for tool activity reporting.
+func (a *Agent) SetOnToolActivity(fn func(agentID, toolName string, args map[string]any, status string)) {
+	a.onToolActivity = fn
 }
 
 // SetOnInput sets the callback for requesting user input.
@@ -1337,6 +1345,11 @@ func (a *Agent) executeTool(ctx context.Context, call *genai.FunctionCall) tools
 		}
 	}
 
+	// Report tool start to UI
+	if a.onToolActivity != nil {
+		a.onToolActivity(a.ID, call.Name, call.Args, "start")
+	}
+
 	// === IMPROVEMENT 2: Retry mechanism with exponential backoff ===
 	maxRetries := 3
 	var lastErr error
@@ -1346,6 +1359,10 @@ func (a *Agent) executeTool(ctx context.Context, call *genai.FunctionCall) tools
 		// The tool itself (e.g., bash) is responsible for implementing its own timeout
 		result, err := tool.Execute(ctx, call.Args)
 		if err == nil {
+			// Report tool end to UI
+			if a.onToolActivity != nil {
+				a.onToolActivity(a.ID, call.Name, call.Args, "end")
+			}
 			// Success - return result
 			return result
 		}

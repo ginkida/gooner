@@ -162,12 +162,19 @@ func (c *ClearCommand) GetMetadata() CommandMetadata {
 }
 
 func (c *ClearCommand) Execute(ctx context.Context, args []string, app AppInterface) (string, error) {
+	// Save current plan before clearing (so it can be resumed with /resume-plan)
+	if pm := app.GetPlanManager(); pm != nil {
+		if currentPlan := pm.GetCurrentPlan(); currentPlan != nil && !currentPlan.IsComplete() {
+			_ = pm.SaveCurrentPlan()
+		}
+	}
+
 	app.ClearConversation()
 	// Also clear todos
 	if todoTool := app.GetTodoTool(); todoTool != nil {
 		todoTool.ClearItems()
 	}
-	return "Conversation and todos cleared.", nil
+	return "Conversation and todos cleared. Active plan saved for /resume-plan.", nil
 }
 
 // CompactCommand forces context compaction.

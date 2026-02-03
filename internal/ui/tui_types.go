@@ -70,8 +70,13 @@ type (
 	ToolResultMsg string
 	// ToolProgressMsg is sent periodically during long-running tool execution.
 	ToolProgressMsg struct {
-		Name    string
-		Elapsed time.Duration
+		Name           string
+		Elapsed        time.Duration
+		Progress       float64 // 0.0-1.0, -1 for indeterminate
+		CurrentStep    string  // "Copying files...", "Reading..."
+		TotalBytes     int64
+		ProcessedBytes int64
+		Cancellable    bool
 	}
 	ResponseDoneMsg struct{}
 	// ResponseMetadataMsg carries metadata about the completed response.
@@ -182,4 +187,65 @@ type (
 		ToolsUsed     []string      // Tools used so far
 		Elapsed       time.Duration // Time elapsed
 	}
+
+	// SubAgentActivityMsg reports activity from sub-agents.
+	SubAgentActivityMsg struct {
+		AgentID   string
+		AgentType string
+		ToolName  string
+		ToolArgs  map[string]any
+		Status    string        // "start", "tool_start", "tool_end", "complete", "failed"
+		Elapsed   time.Duration // Time elapsed since agent start
+	}
 )
+
+// ActivityType distinguishes sources of activity.
+type ActivityType int
+
+const (
+	ActivityTypeTool ActivityType = iota
+	ActivityTypeAgent
+	ActivityTypeSystem
+)
+
+// ActivityStatus tracks the lifecycle of an activity entry.
+type ActivityStatus int
+
+const (
+	ActivityPending ActivityStatus = iota
+	ActivityRunning
+	ActivityCompleted
+	ActivityFailed
+)
+
+// ActivityFeedEntry represents an entry in the activity feed.
+type ActivityFeedEntry struct {
+	ID          string
+	Type        ActivityType
+	Name        string        // Tool or agent name
+	Description string        // "Reading /path/to/file.go"
+	Status      ActivityStatus
+	StartTime   time.Time
+	Duration    time.Duration
+	AgentID     string         // For sub-agent tool calls
+	Details     map[string]any // Additional details
+}
+
+// StatusType indicates the type of status update.
+type StatusType int
+
+const (
+	StatusRetry StatusType = iota
+	StatusRateLimit
+	StatusStreamIdle
+	StatusStreamResume
+	StatusRecoverableError
+)
+
+// StatusUpdateMsg carries status updates from clients to the UI.
+// Used to show feedback during retry operations, rate limiting, and stream idle states.
+type StatusUpdateMsg struct {
+	Type    StatusType
+	Message string
+	Details map[string]any
+}

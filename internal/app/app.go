@@ -736,6 +736,14 @@ func (a *App) executePlanDirectly(ctx context.Context, approvedPlan *plan.Plan) 
 	planPrompt := a.promptBuilder.BuildPlanExecutionPromptWithContext(
 		approvedPlan.Title, approvedPlan.Description, steps, contextSnapshot)
 
+	// 3b. Save plan to persistent storage before clearing session
+	// This ensures plan can be resumed if app crashes during execution
+	if a.planManager != nil {
+		if err := a.planManager.SaveCurrentPlan(); err != nil {
+			logging.Warn("failed to save plan before execution", "error", err)
+		}
+	}
+
 	// 4. Clear session history
 	a.session.Clear()
 

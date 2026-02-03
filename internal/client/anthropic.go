@@ -59,11 +59,12 @@ type AnthropicConfig struct {
 
 // AnthropicClient implements Client interface for Anthropic-compatible APIs (including GLM-4.7).
 type AnthropicClient struct {
-	config      AnthropicConfig
-	httpClient  *http.Client
-	tools       []*genai.Tool
-	rateLimiter RateLimiter
-	mu          sync.RWMutex
+	config         AnthropicConfig
+	httpClient     *http.Client
+	tools          []*genai.Tool
+	rateLimiter    RateLimiter
+	statusCallback StatusCallback
+	mu             sync.RWMutex
 }
 
 // NewAnthropicClient creates a new Anthropic-compatible client.
@@ -199,6 +200,13 @@ func (c *AnthropicClient) SetRateLimiter(limiter interface{}) {
 	if rl, ok := limiter.(RateLimiter); ok {
 		c.rateLimiter = rl
 	}
+}
+
+// SetStatusCallback sets the callback for status updates during operations.
+func (c *AnthropicClient) SetStatusCallback(cb StatusCallback) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.statusCallback = cb
 }
 
 // CountTokens counts tokens for the given contents.
@@ -343,6 +351,29 @@ func (c *AnthropicClient) streamRequest(ctx context.Context, requestBody map[str
 			// Exponential backoff with jitter
 			delay := calculateBackoffWithJitter(c.config.RetryDelay, attempt-1, maxDelay)
 			logging.Info("retrying request", "attempt", attempt, "delay", delay, "last_status", lastStatusCode)
+
+			// Notify UI about retry
+			c.mu.RLock()
+			cb := c.statusCallback
+			c.mu.RUnlock()
+			if cb != nil {
+				reason := "API error"
+				if lastErr != nil {
+					reason = lastErr.Error()
+					// Shorten common error patterns
+					if lastStatusCode == 429 || strings.Contains(reason, "429") {
+						reason = "rate limit"
+					} else if strings.Contains(reason, "connection") {
+						reason = "connection error"
+					} else if strings.Contains(reason, "timeout") {
+						reason = "timeout"
+					} else if len(reason) > 50 {
+						reason = reason[:47] + "..."
+					}
+				}
+				cb.OnRetry(attempt, c.config.MaxRetries, delay, reason)
+			}
+
 			select {
 			case <-time.After(delay):
 			case <-ctx.Done():
@@ -454,6 +485,13 @@ func (c *AnthropicClient) doStreamRequest(ctx context.Context, requestBody map[s
 
 	// Stream idle timeout (30 seconds between chunks)
 	const streamIdleTimeout = 30 * time.Second
+	// Stream idle warning (15 seconds) - notify UI before timeout
+	const streamIdleWarning = 15 * time.Second
+
+	// Capture status callback for goroutine
+	c.mu.RLock()
+	statusCb := c.statusCallback
+	c.mu.RUnlock()
 
 	// Process stream in goroutine
 	go func() {
@@ -495,124 +533,165 @@ func (c *AnthropicClient) doStreamRequest(ctx context.Context, requestBody map[s
 		idleTimer := time.NewTimer(streamIdleTimeout)
 		defer idleTimer.Stop()
 
+		// Warning timer for UI feedback (fires at 15s, then again at 25s)
+		warningTimer := time.NewTimer(streamIdleWarning)
+		defer warningTimer.Stop()
+		lastWarningAt := time.Duration(0)
+
 	scanLoop:
 		for {
-			// Reset idle timer for each iteration
-			if !idleTimer.Stop() {
+		waitLoop:
+			for {
+				// Wait for scan result with timeout
 				select {
-				case <-idleTimer.C:
-				default:
-				}
-			}
-			idleTimer.Reset(streamIdleTimeout)
-
-			// Wait for scan result with timeout
-			select {
-			case <-ctx.Done():
-				logging.Debug("context cancelled, stopping stream processing")
-				chunks <- ResponseChunk{Error: ctx.Err(), Done: true}
-				return
-
-			case <-idleTimer.C:
-				logging.Warn("stream idle timeout exceeded", "timeout", streamIdleTimeout)
-				chunks <- ResponseChunk{
-					Error: fmt.Errorf("stream idle timeout: no data received for %v", streamIdleTimeout),
-					Done:  true,
-				}
-				return
-
-			case result, ok := <-scanCh:
-				if !ok {
-					// Channel closed, scanner finished
-					break scanLoop
-				}
-				if !result.ok {
-					if result.err != nil {
-						logging.Warn("SSE scanner error", "error", result.err)
-						chunks <- ResponseChunk{Error: result.err, Done: true}
-					}
-					break scanLoop
-				}
-				line := result.line
-
-				// Log raw SSE lines for debugging
-				if line != "" {
-					logging.Debug("SSE raw line", "line", line)
-				}
-
-				// SSE format: "data: {...}" or "data:{...}" (handle both)
-				var data string
-				if strings.HasPrefix(line, "data: ") {
-					data = strings.TrimPrefix(line, "data: ")
-				} else if strings.HasPrefix(line, "data:") {
-					data = strings.TrimPrefix(line, "data:")
-				} else {
-					continue
-				}
-				eventCount++
-				// Log FULL data for error events to see the complete error message
-				if strings.Contains(data, "error") {
-					logging.Error("SSE ERROR event received", "full_data", data)
-				} else {
-					logging.Debug("SSE data event", "count", eventCount, "data_preview", truncateString(data, 200))
-				}
-
-				// Skip "[DONE]" marker
-				if data == "[DONE]" {
-					// Send any accumulated tool calls before marking done
-					if len(accumulator.completedCalls) > 0 {
-						chunks <- ResponseChunk{
-							FunctionCalls: accumulator.completedCalls,
-							Done:          true,
-						}
-					} else {
-						select {
-						case chunks <- ResponseChunk{Done: true}:
-						case <-ctx.Done():
-							return
-						}
-					}
+				case <-ctx.Done():
+					logging.Debug("context cancelled, stopping stream processing")
+					chunks <- ResponseChunk{Error: ctx.Err(), Done: true}
 					return
-				}
 
-				// Parse JSON
-				var event map[string]interface{}
-				if err := json.Unmarshal([]byte(data), &event); err != nil {
-					// Log invalid JSON for debugging
-					preview := data
-					if len(preview) > 100 {
-						preview = preview[:100] + "..."
+				case <-warningTimer.C:
+					// Stream idle warning - notify UI
+					lastWarningAt += streamIdleWarning
+					if statusCb != nil {
+						statusCb.OnStreamIdle(lastWarningAt)
 					}
-					logging.Warn("failed to parse SSE event", "error", err, "data", preview)
-					continue
-				}
+					// Reset for next warning (every 10 seconds after first)
+					warningTimer.Reset(10 * time.Second)
+					// Continue waiting in the same select
+					continue waitLoop
 
-				// Handle Z.AI/GLM error format: {"error":{"code":"...", "message":"..."}}
-				if errObj, ok := event["error"].(map[string]interface{}); ok {
-					errCode, _ := errObj["code"].(string)
-					errMsg, _ := errObj["message"].(string)
-					logging.Error("Z.AI API error", "code", errCode, "message", errMsg)
+				case <-idleTimer.C:
+					logging.Warn("stream idle timeout exceeded", "timeout", streamIdleTimeout)
 					chunks <- ResponseChunk{
-						Error: fmt.Errorf("API error (%s): %s", errCode, errMsg),
+						Error: fmt.Errorf("stream idle timeout: no data received for %v", streamIdleTimeout),
 						Done:  true,
 					}
 					return
-				}
 
-				// Process event
-				chunk := c.processStreamEvent(event, accumulator)
-				if chunk.Text != "" || chunk.Done || len(chunk.FunctionCalls) > 0 {
-					// Check context before sending chunk
-					select {
-					case chunks <- chunk:
-					case <-ctx.Done():
-						logging.Debug("context cancelled during chunk send")
+				case result, ok := <-scanCh:
+					// Got data - notify resume if we had warned
+					if lastWarningAt > 0 && statusCb != nil {
+						statusCb.OnStreamResume()
+					}
+					lastWarningAt = 0
+
+					// Reset timers
+					if !idleTimer.Stop() {
+						select {
+						case <-idleTimer.C:
+						default:
+						}
+					}
+					idleTimer.Reset(streamIdleTimeout)
+
+					if !warningTimer.Stop() {
+						select {
+						case <-warningTimer.C:
+						default:
+						}
+					}
+					warningTimer.Reset(streamIdleWarning)
+
+					if !ok {
+						// Channel closed, scanner finished
+						break scanLoop
+					}
+					if !result.ok {
+						if result.err != nil {
+							logging.Warn("SSE scanner error", "error", result.err)
+							chunks <- ResponseChunk{Error: result.err, Done: true}
+						}
+						break scanLoop
+					}
+
+					// Process the line - break out of waitLoop to handle it
+					line := result.line
+
+					// Log raw SSE lines for debugging
+					if line != "" {
+						logging.Debug("SSE raw line", "line", line)
+					}
+
+					// SSE format: "data: {...}" or "data:{...}" (handle both)
+					var data string
+					if strings.HasPrefix(line, "data: ") {
+						data = strings.TrimPrefix(line, "data: ")
+					} else if strings.HasPrefix(line, "data:") {
+						data = strings.TrimPrefix(line, "data:")
+					} else {
+						continue waitLoop // Empty line or event: line
+					}
+
+					eventCount++
+					// Log FULL data for error events
+					if strings.Contains(data, "error") {
+						logging.Error("SSE ERROR event received", "full_data", data)
+					} else {
+						logging.Debug("SSE data event", "count", eventCount, "data_preview", truncateString(data, 200))
+					}
+
+					// Skip "[DONE]" marker
+					if data == "[DONE]" {
+						// Send any accumulated tool calls before marking done
+						if len(accumulator.completedCalls) > 0 {
+							chunks <- ResponseChunk{
+								FunctionCalls: accumulator.completedCalls,
+								Done:          true,
+							}
+						} else {
+							select {
+							case chunks <- ResponseChunk{Done: true}:
+							case <-ctx.Done():
+								return
+							}
+						}
 						return
 					}
-				}
 
-				if chunk.Done {
-					return
+					// Parse JSON
+					var event map[string]interface{}
+					if err := json.Unmarshal([]byte(data), &event); err != nil {
+						preview := data
+						if len(preview) > 100 {
+							preview = preview[:100] + "..."
+						}
+						logging.Warn("failed to parse SSE event", "error", err, "data", preview)
+						// Notify UI about recoverable parse error
+						if statusCb != nil {
+							statusCb.OnError(fmt.Errorf("incomplete SSE data: %v", err), true)
+						}
+						continue waitLoop
+					}
+
+					// Handle Z.AI/GLM error format
+					if errObj, ok := event["error"].(map[string]interface{}); ok {
+						errCode, _ := errObj["code"].(string)
+						errMsg, _ := errObj["message"].(string)
+						logging.Error("Z.AI API error", "code", errCode, "message", errMsg)
+						chunks <- ResponseChunk{
+							Error: fmt.Errorf("API error (%s): %s", errCode, errMsg),
+							Done:  true,
+						}
+						return
+					}
+
+					// Process event
+					chunk := c.processStreamEvent(event, accumulator)
+					if chunk.Text != "" || chunk.Done || len(chunk.FunctionCalls) > 0 {
+						select {
+						case chunks <- chunk:
+						case <-ctx.Done():
+							logging.Debug("context cancelled during chunk send")
+							return
+						}
+					}
+
+					if chunk.Done {
+						return
+					}
+
+					// Continue to next iteration of scanLoop
+					break waitLoop
 				}
 			}
 		}
@@ -660,7 +739,6 @@ func (c *AnthropicClient) processStreamEvent(event map[string]interface{}, acc *
 				}
 				acc.currentToolInput.Reset()
 			} else if blockType == "thinking" {
-				// Start of thinking block - reset accumulator
 				acc.thinkingBuilder.Reset()
 				logging.Debug("thinking block started")
 			}
@@ -682,7 +760,7 @@ func (c *AnthropicClient) processStreamEvent(event map[string]interface{}, acc *
 			deltaType, _ := delta["type"].(string)
 			logging.Debug("SSE delta content", "delta", delta, "type", deltaType)
 
-			// Handle thinking delta (extended thinking mode)
+			// Handle thinking delta
 			if deltaType == "thinking_delta" {
 				if thinking, ok := delta["thinking"].(string); ok && thinking != "" {
 					acc.thinkingBuilder.WriteString(thinking)
@@ -691,7 +769,7 @@ func (c *AnthropicClient) processStreamEvent(event map[string]interface{}, acc *
 				}
 			}
 
-			// Handle text delta (check both with and without type for compatibility)
+			// Handle text delta
 			if deltaType == "text_delta" || (deltaType == "" && acc.currentBlockType == "text") {
 				if text, ok := delta["text"].(string); ok && text != "" {
 					chunk.Text = text

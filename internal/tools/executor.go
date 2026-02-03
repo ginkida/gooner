@@ -758,6 +758,7 @@ func (e *Executor) doExecuteTool(ctx context.Context, call *genai.FunctionCall) 
 	start := time.Now()
 
 	// Start progress heartbeat for long-running operations
+	// Use 500ms interval for responsive UI feedback (was 5s)
 	done := make(chan struct{})
 	if e.handler != nil && e.handler.OnToolProgress != nil {
 		go func() {
@@ -766,7 +767,13 @@ func (e *Executor) doExecuteTool(ctx context.Context, call *genai.FunctionCall) 
 					logging.Error("panic in tool progress goroutine", "tool", call.Name, "panic", r)
 				}
 			}()
-			ticker := time.NewTicker(5 * time.Second)
+
+			// Send immediate progress notification on tool start
+			if e.handler != nil && e.handler.OnToolProgress != nil {
+				e.handler.OnToolProgress(call.Name, 0)
+			}
+
+			ticker := time.NewTicker(500 * time.Millisecond)
 			defer ticker.Stop()
 			for {
 				select {

@@ -31,6 +31,13 @@ type PlanStepState struct {
 	Error       string
 }
 
+// ActivityEntry represents a single activity log entry.
+type ActivityEntry struct {
+	Timestamp time.Time
+	Type      string // "tool", "file", "info"
+	Message   string
+}
+
 // PlanProgressPanel displays detailed plan execution progress.
 type PlanProgressPanel struct {
 	visible       bool
@@ -43,16 +50,24 @@ type PlanProgressPanel struct {
 	styles        *Styles
 	collapsed     bool // Compact mode
 	frame         int  // For animations
+
+	// Live activity feed
+	activities    []ActivityEntry
+	maxActivities int    // Max entries to keep (default: 5)
+	currentTool   string // Currently executing tool
+	currentInfo   string // Tool info (file path, command, etc.)
 }
 
 // NewPlanProgressPanel creates a new plan progress panel.
 func NewPlanProgressPanel(styles *Styles) *PlanProgressPanel {
 	return &PlanProgressPanel{
-		visible:   false,
-		steps:     make([]PlanStepState, 0),
-		styles:    styles,
-		collapsed: false,
-		frame:     0,
+		visible:       false,
+		steps:         make([]PlanStepState, 0),
+		styles:        styles,
+		collapsed:     false,
+		frame:         0,
+		activities:    make([]ActivityEntry, 0),
+		maxActivities: 5,
 	}
 }
 
@@ -148,6 +163,54 @@ func (p *PlanProgressPanel) Toggle() {
 // Tick updates the animation frame.
 func (p *PlanProgressPanel) Tick() {
 	p.frame++
+}
+
+// SetCurrentTool updates the currently executing tool.
+func (p *PlanProgressPanel) SetCurrentTool(toolName, toolInfo string) {
+	if toolName == "" {
+		p.currentTool = ""
+		p.currentInfo = ""
+		return
+	}
+
+	p.currentTool = toolName
+	p.currentInfo = toolInfo
+
+	// Add to activity log
+	msg := toolName
+	if toolInfo != "" {
+		if len(toolInfo) > 40 {
+			toolInfo = toolInfo[:37] + "..."
+		}
+		msg += ": " + toolInfo
+	}
+	p.AddActivity("tool", msg)
+}
+
+// ClearCurrentTool clears the current tool.
+func (p *PlanProgressPanel) ClearCurrentTool() {
+	p.currentTool = ""
+	p.currentInfo = ""
+}
+
+// AddActivity adds an entry to the activity log.
+func (p *PlanProgressPanel) AddActivity(actType, message string) {
+	entry := ActivityEntry{
+		Timestamp: time.Now(),
+		Type:      actType,
+		Message:   message,
+	}
+	p.activities = append(p.activities, entry)
+
+	// Trim to max size
+	if len(p.activities) > p.maxActivities {
+		p.activities = p.activities[len(p.activities)-p.maxActivities:]
+	}
+}
+
+// ClearActivities clears the activity log.
+func (p *PlanProgressPanel) ClearActivities() {
+	p.activities = make([]ActivityEntry, 0)
 }
 
 // Progress returns the completion progress (0.0 to 1.0).
@@ -283,6 +346,79 @@ func (p *PlanProgressPanel) View(width int) string {
 		}
 		content.WriteString(borderStyle.Render("│"))
 		content.WriteString("\n")
+	}
+
+	// Current tool activity (live indicator)
+	if p.currentTool != "" {
+		content.WriteString(borderStyle.Render("┣") + borderStyle.Render(strings.Repeat("─", panelWidth-1)) + borderStyle.Render("┫"))
+		content.WriteString("\n")
+
+		// Animated spinner
+		spinners := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		spinner := spinners[p.frame%len(spinners)]
+
+		toolStyle := lipgloss.NewStyle().Foreground(ColorWarning).Bold(true)
+		infoStyle := lipgloss.NewStyle().Foreground(ColorAccent)
+
+		toolLine := "  " + toolStyle.Render(spinner+" "+p.currentTool)
+		if p.currentInfo != "" {
+			info := p.currentInfo
+			maxInfoLen := panelWidth - lipgloss.Width(toolLine) - 6
+			if maxInfoLen > 0 && len(info) > maxInfoLen {
+				info = info[:maxInfoLen-3] + "..."
+			}
+			if maxInfoLen > 0 {
+				toolLine += " " + infoStyle.Render(info)
+			}
+		}
+
+		content.WriteString(borderStyle.Render("┃"))
+		content.WriteString(toolLine)
+		padding := panelWidth - 1 - lipgloss.Width(toolLine)
+		if padding > 0 {
+			content.WriteString(strings.Repeat(" ", padding))
+		}
+		content.WriteString(borderStyle.Render("┃"))
+		content.WriteString("\n")
+	}
+
+	// Recent activity log
+	if len(p.activities) > 0 {
+		if p.currentTool == "" {
+			content.WriteString(borderStyle.Render("┣") + borderStyle.Render(strings.Repeat("─", panelWidth-1)) + borderStyle.Render("┫"))
+			content.WriteString("\n")
+		}
+
+		activityStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
+
+		// Show last few activities
+		startIdx := 0
+		if len(p.activities) > 3 {
+			startIdx = len(p.activities) - 3
+		}
+
+		for i := startIdx; i < len(p.activities); i++ {
+			act := p.activities[i]
+			age := time.Since(act.Timestamp)
+			ageStr := ""
+			if age < time.Minute {
+				ageStr = fmt.Sprintf("%ds ago", int(age.Seconds()))
+			}
+
+			actLine := "  " + activityStyle.Render("› "+act.Message)
+			if ageStr != "" && panelWidth > 60 {
+				actLine += " " + dimStyle.Render(ageStr)
+			}
+
+			content.WriteString(borderStyle.Render("┃"))
+			content.WriteString(actLine)
+			padding := panelWidth - 1 - lipgloss.Width(actLine)
+			if padding > 0 {
+				content.WriteString(strings.Repeat(" ", padding))
+			}
+			content.WriteString(borderStyle.Render("┃"))
+			content.WriteString("\n")
+		}
 	}
 
 	// Footer

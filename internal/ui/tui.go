@@ -12,6 +12,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const (
+	// slowOperationThreshold is the time after which we show a "slow operation" warning
+	slowOperationThreshold = 3 * time.Second
+)
+
 // Model represents the main TUI model.
 type Model struct {
 	input   InputModel
@@ -31,6 +36,10 @@ type Model struct {
 	// Streaming timeout protection
 	streamStartTime time.Time
 	streamTimeout   time.Duration
+
+	// Slow operation warning
+	lastActivityTime   time.Time // Last time we received any activity (tool call, stream, etc.)
+	slowWarningShown   bool      // Whether we've shown the slow warning for current operation
 
 	// Rate limiting / debounce for message submission
 	lastSubmitTime time.Time
@@ -110,6 +119,9 @@ type Model struct {
 	progressModel  ProgressModel
 	progressActive bool
 
+	// Tool progress bar (for long-running tool operations)
+	toolProgressBar *ToolProgressBarModel
+
 	// Tool output state (for expand/collapse)
 	toolOutput          *ToolOutputModel
 	lastToolOutputIndex int // Tool output index
@@ -165,6 +177,10 @@ type Model struct {
 
 	// Background task tracking
 	backgroundTasks map[string]*BackgroundTaskState
+
+	// Activity feed panel
+	activityFeed  *ActivityFeedPanel
+	currentToolID string // For tracking active tool
 }
 
 // BackgroundTaskState tracks the state of a background task for UI display.
@@ -229,6 +245,8 @@ func NewModel() *Model {
 		toastManager:         NewToastManager(styles),
 		planProgressPanel:    NewPlanProgressPanel(styles),
 		backgroundTasks:      make(map[string]*BackgroundTaskState),
+		toolProgressBar:      NewToolProgressBarModel(styles),
+		activityFeed:         NewActivityFeedPanel(styles),
 	}
 }
 
@@ -278,6 +296,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		cmds = append(cmds, cmd)
 
+		// Flush pending viewport updates (debounced content)
+		m.output.FlushPendingUpdate()
+
 		// Update toast manager (clean up expired toasts)
 		if m.toastManager != nil {
 			m.toastManager.Update()
@@ -288,12 +309,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.planProgressPanel.Tick()
 		}
 
+		// Update tool progress bar animation
+		if m.toolProgressBar != nil {
+			m.toolProgressBar.Tick()
+		}
+
+		// Update activity feed animation
+		if m.activityFeed != nil {
+			m.activityFeed.Tick()
+		}
+
 		// Check for streaming timeout
 		if (m.state == StateProcessing || m.state == StateStreaming) &&
 			!m.streamStartTime.IsZero() &&
 			time.Since(m.streamStartTime) > m.streamTimeout {
 			m.state = StateInput
 			m.streamStartTime = time.Time{}
+			m.lastActivityTime = time.Time{}
+			m.slowWarningShown = false
 			m.currentTool = ""
 			m.currentToolInfo = ""
 			m.responseHeaderShown = false
@@ -305,6 +338,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.onInterrupt()
 			}
 			cmds = append(cmds, m.input.Focus())
+		}
+
+		// Check for slow operation warning (show toast after 3 seconds of no activity)
+		if (m.state == StateProcessing || m.state == StateStreaming) &&
+			!m.slowWarningShown &&
+			!m.lastActivityTime.IsZero() &&
+			time.Since(m.lastActivityTime) > slowOperationThreshold {
+			m.slowWarningShown = true
+			if m.toastManager != nil {
+				m.toastManager.ShowWarning("Operation taking longer than expected... (ESC to cancel)")
+			}
 		}
 	}
 
@@ -835,6 +879,14 @@ func (m *Model) handleGlobalKeys(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 
+	// Handle 'a' key for activity feed toggle (only when input is empty)
+	if msg.String() == "a" && m.state == StateInput && m.input.Value() == "" {
+		if m.activityFeed != nil {
+			m.activityFeed.Toggle()
+		}
+		return nil
+	}
+
 	// Handle 'e' key for tool output expand/collapse (only when input is empty)
 	if msg.String() == "e" && m.state == StateInput && m.input.Value() == "" {
 		if m.toolOutput != nil && m.lastToolOutputIndex >= 0 {
@@ -881,6 +933,20 @@ func (m *Model) handleGlobalKeys(msg tea.KeyMsg) tea.Cmd {
 
 	switch msg.Type {
 	case tea.KeyCtrlC:
+		// If tool progress bar is visible and cancellable, cancel the operation
+		if m.toolProgressBar != nil && m.toolProgressBar.IsVisible() && m.toolProgressBar.IsCancellable() {
+			if m.onCancel != nil {
+				m.onCancel()
+			}
+			m.toolProgressBar.Hide()
+			m.state = StateInput
+			m.currentTool = ""
+			m.currentToolInfo = ""
+			m.output.AppendLine("")
+			m.output.AppendLine(m.styles.Warning.Render(" Operation cancelled"))
+			m.output.AppendLine("")
+			return m.input.Focus()
+		}
 		if m.onQuit != nil {
 			m.onQuit()
 		}
@@ -920,8 +986,10 @@ func (m *Model) handleGlobalKeys(msg tea.KeyMsg) tea.Cmd {
 				m.input.AddToHistory(value) // Save to history
 				m.input.Reset()
 				m.state = StateProcessing
-				m.streamStartTime = time.Now() // Start timeout tracking
-				m.responseHeaderShown = false  // Reset for new response
+				m.streamStartTime = time.Now()  // Start timeout tracking
+				m.lastActivityTime = time.Now() // Start activity tracking
+				m.slowWarningShown = false      // Reset slow warning
+				m.responseHeaderShown = false   // Reset for new response
 				m.output.AppendLine(m.styles.FormatUserMessage(value))
 				m.output.AppendLine("")
 
@@ -978,6 +1046,8 @@ func (m *Model) handleMessageTypes(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case StreamTextMsg:
 		m.streamStartTime = time.Now() // Reset timeout on streaming activity
+		m.lastActivityTime = time.Now()
+		m.slowWarningShown = false
 		m.state = StateStreaming
 
 		// Mark response as started (no header in Claude Code style)
@@ -989,6 +1059,8 @@ func (m *Model) handleMessageTypes(msg tea.Msg) tea.Cmd {
 
 	case ToolCallMsg:
 		m.streamStartTime = time.Now() // Reset timeout on tool activity
+		m.lastActivityTime = time.Now()
+		m.slowWarningShown = false
 		m.currentTool = msg.Name
 		m.currentToolInfo = "" // Reset tool info
 		m.toolStartTime = time.Now()
@@ -1001,27 +1073,72 @@ func (m *Model) handleMessageTypes(msg tea.Msg) tea.Cmd {
 		// Generate tool info for status line display
 		m.currentToolInfo = m.extractToolInfoFromArgs(msg.Name, msg.Args)
 
+		// Update plan progress panel with current tool (live activity)
+		if m.planProgressPanel != nil && m.planProgressPanel.IsVisible() {
+			m.planProgressPanel.SetCurrentTool(msg.Name, m.currentToolInfo)
+		}
+
+		// Add to activity feed
+		if m.activityFeed != nil {
+			toolID := fmt.Sprintf("tool-%d", time.Now().UnixNano())
+			m.currentToolID = toolID
+			m.activityFeed.AddEntry(ActivityFeedEntry{
+				ID:          toolID,
+				Type:        ActivityTypeTool,
+				Name:        msg.Name,
+				Description: formatToolActivity(msg.Name, msg.Args),
+				Status:      ActivityRunning,
+				StartTime:   time.Now(),
+				Details:     msg.Args,
+			})
+		}
+
 		// Show tool call in output with enhanced block formatting
 		m.output.AppendLine(m.styles.FormatToolExecutingBlock(msg.Name, msg.Args))
 
 	case ToolResultMsg:
 		m.streamStartTime = time.Now() // Reset timeout on tool result
+		m.lastActivityTime = time.Now()
+		m.slowWarningShown = false
 		m.handleToolResult(string(msg))
+
+		// Complete entry in activity feed
+		if m.activityFeed != nil && m.currentToolID != "" {
+			m.activityFeed.CompleteEntry(m.currentToolID, true, "")
+			m.currentToolID = ""
+		}
+
 		// Clear current tool after result - next ToolCallMsg will set new tool
 		m.currentTool = ""
 		m.currentToolInfo = ""
+		// Hide tool progress bar
+		if m.toolProgressBar != nil {
+			m.toolProgressBar.Hide()
+		}
+		// Clear current tool in plan progress panel
+		if m.planProgressPanel != nil && m.planProgressPanel.IsVisible() {
+			m.planProgressPanel.ClearCurrentTool()
+		}
 
 	case ToolProgressMsg:
 		// Reset timeout on progress heartbeat (keeps UI alive during long operations)
 		m.streamStartTime = time.Now()
+		m.lastActivityTime = time.Now()
+		m.slowWarningShown = false
+		// Update tool progress bar
+		if m.toolProgressBar != nil {
+			m.toolProgressBar.Update(msg)
+		}
 
 	case ResponseDoneMsg:
 		m.state = StateInput
 		m.currentTool = ""
 		m.currentToolInfo = ""
-		m.streamStartTime = time.Time{} // Reset timeout tracking
-		m.responseHeaderShown = false   // Reset for next response
-		m.output.FlushStream()          // Flush any remaining streamed content
+		m.streamStartTime = time.Time{}  // Reset timeout tracking
+		m.lastActivityTime = time.Time{} // Reset activity tracking
+		m.slowWarningShown = false       // Reset slow warning
+		m.responseHeaderShown = false    // Reset for next response
+		m.output.FlushStream()           // Flush any remaining streamed content
 		m.output.AppendLine("")
 		cmds = append(cmds, m.input.Focus())
 
@@ -1286,6 +1403,42 @@ func (m *Model) handleMessageTypes(msg tea.Msg) tea.Cmd {
 	// Background task tracking
 	case BackgroundTaskMsg:
 		m.handleBackgroundTask(msg)
+
+	// Sub-agent activity tracking
+	case SubAgentActivityMsg:
+		if m.activityFeed != nil {
+			switch msg.Status {
+			case "start":
+				m.activityFeed.StartSubAgent(msg.AgentID, msg.AgentType,
+					fmt.Sprintf("Sub-agent: %s", msg.AgentType))
+			case "tool_start":
+				m.activityFeed.UpdateSubAgentTool(msg.AgentID, msg.ToolName, msg.ToolArgs)
+			case "tool_end":
+				// Tool completed, but agent continues
+				m.activityFeed.UpdateSubAgentTool(msg.AgentID, "", nil)
+			case "complete":
+				m.activityFeed.CompleteSubAgent(msg.AgentID, true, "")
+			case "failed":
+				m.activityFeed.CompleteSubAgent(msg.AgentID, false, "")
+			}
+		}
+
+	// Status updates from client (retry, rate limit, stream idle)
+	case StatusUpdateMsg:
+		if m.toastManager != nil {
+			switch msg.Type {
+			case StatusRetry:
+				m.toastManager.ShowWarning(msg.Message)
+			case StatusRateLimit:
+				m.toastManager.ShowWarning(msg.Message)
+			case StatusStreamIdle:
+				m.toastManager.ShowInfo(msg.Message)
+			case StatusStreamResume:
+				// Clear any stream idle warning - toasts auto-expire
+			case StatusRecoverableError:
+				m.toastManager.ShowError(msg.Message)
+			}
+		}
 	}
 
 	if len(cmds) > 0 {
@@ -1454,9 +1607,21 @@ func (m Model) View() string {
 		builder.WriteString("\n")
 	}
 
+	// Activity feed panel
+	if m.activityFeed != nil && m.activityFeed.IsVisible() && m.activityFeed.HasActiveEntries() {
+		builder.WriteString(m.activityFeed.View(m.width))
+		builder.WriteString("\n")
+	}
+
 	// Status line with todos
 	if len(m.todoItems) > 0 && m.todosVisible {
 		builder.WriteString(m.renderTodos())
+		builder.WriteString("\n")
+	}
+
+	// Tool progress bar (for long-running operations)
+	if m.toolProgressBar != nil && m.toolProgressBar.IsVisible() {
+		builder.WriteString(m.toolProgressBar.View(m.width))
 		builder.WriteString("\n")
 	}
 
