@@ -144,7 +144,7 @@ When reporting bugs:
 
 Please note that this project adheres to a [Code of Conduct](.github/CODE_OF_CONDUCT.md).
 By participating, you are expected to uphold this code. Please report unacceptable
-behavior to [ginkida@ginkida.dev](mailto:ginkida@ginkida.dev).
+behavior to [ya-ginkida@yandex.kz](mailto:ya-ginkida@yandex.kz).
 
 ## Questions?
 
