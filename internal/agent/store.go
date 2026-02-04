@@ -162,3 +162,144 @@ func (s *AgentStore) Exists(agentID string) bool {
 	_, err := os.Stat(filePath)
 	return err == nil
 }
+
+// SaveCheckpoint saves an agent checkpoint to disk.
+func (s *AgentStore) SaveCheckpoint(cp *AgentCheckpoint) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Create checkpoints subdirectory
+	checkpointsDir := filepath.Join(s.dir, "checkpoints")
+	if err := os.MkdirAll(checkpointsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create checkpoints directory: %w", err)
+	}
+
+	data, err := json.MarshalIndent(cp, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal checkpoint: %w", err)
+	}
+
+	filePath := filepath.Join(checkpointsDir, cp.CheckpointID+".json")
+	if err := os.WriteFile(filePath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write checkpoint: %w", err)
+	}
+
+	return nil
+}
+
+// LoadCheckpoint loads a checkpoint from disk.
+func (s *AgentStore) LoadCheckpoint(checkpointID string) (*AgentCheckpoint, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	filePath := filepath.Join(s.dir, "checkpoints", checkpointID+".json")
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("checkpoint not found: %s", checkpointID)
+		}
+		return nil, fmt.Errorf("failed to read checkpoint: %w", err)
+	}
+
+	var cp AgentCheckpoint
+	if err := json.Unmarshal(data, &cp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal checkpoint: %w", err)
+	}
+
+	return &cp, nil
+}
+
+// ListCheckpoints returns all checkpoint IDs for an agent.
+func (s *AgentStore) ListCheckpoints(agentID string) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	checkpointsDir := filepath.Join(s.dir, "checkpoints")
+	entries, err := os.ReadDir(checkpointsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read checkpoints directory: %w", err)
+	}
+
+	var ids []string
+	prefix := agentID + "-"
+	for _, entry := range entries {
+		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".json" {
+			name := entry.Name()[:len(entry.Name())-5]
+			// Filter by agent ID prefix
+			if len(agentID) == 0 || (len(name) >= len(prefix) && name[:len(prefix)] == prefix) {
+				ids = append(ids, name)
+			}
+		}
+	}
+
+	return ids, nil
+}
+
+// GetLatestCheckpoint returns the most recent checkpoint for an agent.
+func (s *AgentStore) GetLatestCheckpoint(agentID string) (*AgentCheckpoint, error) {
+	ids, err := s.ListCheckpoints(agentID)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("no checkpoints found for agent: %s", agentID)
+	}
+
+	// Checkpoints are named with timestamps, so the last one is the latest
+	// Sort by name (which includes timestamp)
+	latestID := ids[len(ids)-1]
+	for _, id := range ids {
+		if id > latestID {
+			latestID = id
+		}
+	}
+
+	return s.LoadCheckpoint(latestID)
+}
+
+// CleanupCheckpoints removes old checkpoints, keeping only the most recent N.
+func (s *AgentStore) CleanupCheckpoints(agentID string, keepCount int) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	checkpointsDir := filepath.Join(s.dir, "checkpoints")
+	entries, err := os.ReadDir(checkpointsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("failed to read checkpoints directory: %w", err)
+	}
+
+	prefix := agentID + "-"
+	var agentCheckpoints []string
+	for _, entry := range entries {
+		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".json" {
+			name := entry.Name()[:len(entry.Name())-5]
+			if len(name) > len(prefix) && name[:len(prefix)] == prefix {
+				agentCheckpoints = append(agentCheckpoints, entry.Name())
+			}
+		}
+	}
+
+	// Sort to find oldest
+	if len(agentCheckpoints) <= keepCount {
+		return 0, nil
+	}
+
+	// Remove oldest checkpoints
+	toRemove := agentCheckpoints[:len(agentCheckpoints)-keepCount]
+	removed := 0
+	for _, name := range toRemove {
+		filePath := filepath.Join(checkpointsDir, name)
+		if err := os.Remove(filePath); err == nil {
+			removed++
+		}
+	}
+
+	return removed, nil
+}

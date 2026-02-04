@@ -30,7 +30,7 @@ type ActivityReporter interface {
 // Runner manages the execution of multiple agents.
 type Runner struct {
 	client       client.Client
-	baseRegistry *tools.Registry
+	baseRegistry tools.ToolRegistry
 	workDir      string
 	agents       map[string]*Agent
 	results      map[string]*AgentResult
@@ -345,7 +345,7 @@ func (r *Runner) reportActivity() {
 }
 
 // NewRunner creates a new agent runner.
-func NewRunner(c client.Client, registry *tools.Registry, workDir string) *Runner {
+func NewRunner(c client.Client, registry tools.ToolRegistry, workDir string) *Runner {
 	r := &Runner{
 		client:       c,
 		baseRegistry: registry,

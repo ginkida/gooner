@@ -140,11 +140,22 @@ func (sm *SessionManager) LoadLast() (*SessionState, *SessionInfo, error) {
 		return nil, nil, nil // No sessions to load
 	}
 
-	// Find the most recent session
+	// Find the most recent session for the current WorkDir
 	var latest *SessionInfo
+	targetDir := sm.session.WorkDir
+	if targetDir != "" {
+		targetDir = filepath.Clean(targetDir)
+	}
 	for i := range sessions {
-		if latest == nil || sessions[i].LastActive.After(latest.LastActive) {
-			latest = &sessions[i]
+		sessionDir := sessions[i].WorkDir
+		if sessionDir != "" {
+			sessionDir = filepath.Clean(sessionDir)
+		}
+		// Match sessions with same WorkDir, or all sessions if WorkDir is empty
+		if targetDir == "" || sessionDir == targetDir {
+			if latest == nil || sessions[i].LastActive.After(latest.LastActive) {
+				latest = &sessions[i]
+			}
 		}
 	}
 

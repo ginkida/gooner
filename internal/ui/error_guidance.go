@@ -161,3 +161,18 @@ func truncateError(msg string, maxLen int) string {
 	}
 	return msg[:maxLen-3] + "..."
 }
+
+// GetCompactHint returns a short actionable hint for an error.
+// Returns empty string if no matching guidance is found.
+func GetCompactHint(errMsg string) string {
+	guidance := GetErrorGuidance(errMsg)
+	if guidance == nil || len(guidance.Suggestions) == 0 {
+		return ""
+	}
+	// Return first suggestion, shortened if needed
+	hint := guidance.Suggestions[0]
+	if len(hint) > 40 {
+		hint = hint[:37] + "..."
+	}
+	return hint
+}

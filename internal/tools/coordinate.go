@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"gokin/internal/logging"
 	"google.golang.org/genai"
 )
 
@@ -177,7 +178,10 @@ func (t *CoordinateTool) Execute(ctx context.Context, args map[string]any) (Tool
 	}
 
 	// Parse arguments
-	tasksAny := args["tasks"].([]any)
+	tasksAny, ok := args["tasks"].([]any)
+	if !ok {
+		return NewErrorResult("tasks must be an array"), nil
+	}
 	_ = 3 // maxParallel default (used by coordinator)
 	if _, ok := args["max_parallel"].(float64); ok {
 		// maxParallel configured via coordinator factory
@@ -281,7 +285,9 @@ func (t *CoordinateTool) Execute(ctx context.Context, args map[string]any) (Tool
 			Output string `json:"output"`
 			Error  string `json:"error"`
 		}
-		_ = json.Unmarshal(resultJSON, &result)
+		if err := json.Unmarshal(resultJSON, &result); err != nil {
+			logging.Debug("failed to unmarshal task result", "error", err, "taskID", userID)
+		}
 
 		if result.Status == "completed" || result.Error == "" {
 			sb.WriteString("Status: **Completed**\n")

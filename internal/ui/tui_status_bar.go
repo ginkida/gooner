@@ -208,7 +208,7 @@ func (m Model) renderStatusBarMedium() string {
 }
 
 // renderStatusBarFull renders the full status bar for wide terminals (>= 120 chars).
-// Shows warnings + model + branch + tokens% + time.
+// Shows warnings + model + branch + tokens% + time + version.
 func (m Model) renderStatusBarFull() string {
 	dimStyle := lipgloss.NewStyle().Foreground(ColorDim)
 	yoloStyle := lipgloss.NewStyle().Foreground(ColorWarning).Bold(true)
@@ -217,6 +217,7 @@ func (m Model) renderStatusBarFull() string {
 	bgStyle := lipgloss.NewStyle().Foreground(ColorInfo)
 	modelStyle := lipgloss.NewStyle().Foreground(ColorAccent)
 	gitStyle := lipgloss.NewStyle().Foreground(ColorMuted)
+	versionStyle := lipgloss.NewStyle().Foreground(ColorDim)
 
 	var leftParts []string
 
@@ -266,6 +267,11 @@ func (m Model) renderStatusBarFull() string {
 	// Session time
 	elapsed := time.Since(m.sessionStart)
 	rightParts = append(rightParts, dimStyle.Render(formatSessionTime(elapsed)))
+
+	// Version (показываем в конце справа)
+	if m.version != "" {
+		rightParts = append(rightParts, versionStyle.Render("v"+m.version))
+	}
 
 	left := strings.Join(leftParts, " • ")
 	right := strings.Join(rightParts, " ")

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"gokin/internal/logging"
 	"google.golang.org/genai"
 )
 
@@ -328,7 +329,9 @@ func (a *SharedMemoryAdapter) Read(key string) (SharedMemoryEntry, bool) {
 		// Handle direct struct conversion via JSON
 		data, _ := json.Marshal(entry)
 		var result SharedMemoryEntry
-		_ = json.Unmarshal(data, &result)
+		if err := json.Unmarshal(data, &result); err != nil {
+			logging.Debug("failed to unmarshal shared memory entry", "error", err, "key", key)
+		}
 		return result, true
 	}
 	return SharedMemoryEntry{}, false

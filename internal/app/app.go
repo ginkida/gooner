@@ -1901,3 +1901,15 @@ func (a *agentRunnerAdapter) GetResult(agentID string) (tools.AgentResult, bool)
 }
 
 // diffHandlerAdapter is in app_handlers.go
+
+// GetVersion returns the current application version.
+func (a *App) GetVersion() string {
+	return a.config.Version
+}
+
+// AddSystemMessage adds a system message to the TUI chat.
+func (a *App) AddSystemMessage(msg string) {
+	if a.tui != nil {
+		a.tui.AddSystemMessage(msg)
+	}
+}

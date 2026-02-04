@@ -202,6 +202,16 @@ func (v *SSHValidator) ValidateHost(host string) SSHValidationResult {
 		}
 	}
 
+	// Check if the host itself is a direct loopback IP (e.g., 127.0.0.2)
+	if ip := net.ParseIP(normalizedHost); ip != nil {
+		if ip.IsLoopback() {
+			return SSHValidationResult{
+				Valid:  false,
+				Reason: "loopback IP address not allowed",
+			}
+		}
+	}
+
 	// Check if host resolves to a loopback address
 	ips, err := net.LookupIP(normalizedHost)
 	if err == nil {

@@ -43,6 +43,9 @@ and editing files, running commands, and more.`,
 		},
 	})
 
+	// Update command
+	rootCmd.AddCommand(newUpdateCmd())
+
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
@@ -62,6 +65,9 @@ func runApp(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
+
+	// Set version from runtime
+	cfg.Version = version
 
 	// Override model if specified
 	if model != "" {
@@ -95,11 +101,14 @@ func runApp(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get working directory: %w", err)
 	}
 
-	// Create and run the application
+	// Create the application
 	application, err := app.New(cfg, workDir)
 	if err != nil {
 		return fmt.Errorf("failed to create application: %w", err)
 	}
+
+	// Check for updates on startup (non-blocking notification)
+	go CheckForUpdateOnStartup(cfg, application)
 
 	fmt.Println("\nStarting Gokin...")
 	return application.Run()

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gokin/internal/contract"
+	"gokin/internal/logging"
 	"gokin/internal/plan"
 
 	"google.golang.org/genai"
@@ -284,7 +285,9 @@ func (t *EnterPlanModeTool) Execute(ctx context.Context, args map[string]any) (T
 				CreatedAt:  time.Now(),
 				UpdatedAt:  time.Now(),
 			}
-			_ = t.contractStore.Save(ct)
+			if err := t.contractStore.Save(ct); err != nil {
+				logging.Debug("failed to save contract", "error", err, "contractID", ct.ID)
+			}
 			p.ContractID = ct.ID
 		}
 	}

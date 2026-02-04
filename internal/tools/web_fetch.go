@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"gokin/internal/logging"
 	"gokin/internal/security"
 
 	"golang.org/x/net/html"
@@ -140,7 +141,11 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) (ToolRe
 		content = string(body)
 	} else {
 		// Try to extract text anyway
-		content, _ = t.htmlToMarkdown(string(body), selector)
+		var err error
+		content, err = t.htmlToMarkdown(string(body), selector)
+		if err != nil {
+			logging.Debug("failed to convert HTML to markdown", "error", err, "url", urlStr)
+		}
 		if content == "" {
 			content = string(body)
 		}

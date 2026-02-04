@@ -55,6 +55,8 @@ type AppInterface interface {
 	IsPlanningModeEnabled() bool
 	TogglePlanningMode() bool // Returns new state
 	ApplyConfig(cfg *config.Config) error
+	GetVersion() string
+	AddSystemMessage(msg string)
 }
 
 // Handler manages slash commands.
@@ -128,6 +130,9 @@ func NewHandler() *Handler {
 	h.Register(&CopyCommand{})
 	h.Register(&PasteCommand{})
 	h.Register(&QuickLookCommand{})
+
+	// Register update command
+	h.Register(&UpdateCommand{})
 
 	return h
 }

@@ -51,6 +51,7 @@ type SessionInfo struct {
 	LastActive   time.Time `json:"last_active"`
 	Summary      string    `json:"summary"`
 	MessageCount int       `json:"message_count"`
+	WorkDir      string    `json:"work_dir,omitempty"`
 }
 
 // SerializeContent converts a genai.Content to SerializedContent.

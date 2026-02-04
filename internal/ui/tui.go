@@ -62,6 +62,9 @@ type Model struct {
 	// Git info
 	gitBranch string
 
+	// Version info
+	version string
+
 	// Plan progress tracking
 	planProgress     *PlanProgressMsg
 	planProgressMode bool // True when plan is actively executing

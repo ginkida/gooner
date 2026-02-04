@@ -4,26 +4,30 @@ import "time"
 
 // Config represents the main application configuration.
 type Config struct {
-	API         APIConfig         `yaml:"api"`
-	Model       ModelConfig       `yaml:"model"`
-	Tools       ToolsConfig       `yaml:"tools"`
-	UI          UIConfig          `yaml:"ui"`
-	Context     ContextConfig     `yaml:"context"`
-	Permission  PermissionConfig  `yaml:"permission"`
-	Plan        PlanConfig        `yaml:"plan"`
-	Hooks       HooksConfig       `yaml:"hooks"`
-	Web         WebConfig         `yaml:"web"`
-	Session     SessionConfig     `yaml:"session"`
-	Memory      MemoryConfig      `yaml:"memory"`
-	Logging     LoggingConfig     `yaml:"logging"`
-	Audit       AuditConfig       `yaml:"audit"`
-	RateLimit   RateLimitConfig   `yaml:"rate_limit"`
-	Cache       CacheConfig       `yaml:"cache"`
-	Watcher     WatcherConfig     `yaml:"watcher"`
-	DiffPreview DiffPreviewConfig `yaml:"diff_preview"`
-	Semantic    SemanticConfig    `yaml:"semantic"`
-	Contract    ContractConfig    `yaml:"contract"`
-	MCP         MCPConfig         `yaml:"mcp"`
+	API           APIConfig           `yaml:"api"`
+	Model         ModelConfig         `yaml:"model"`
+	Tools         ToolsConfig         `yaml:"tools"`
+	UI            UIConfig            `yaml:"ui"`
+	Context       ContextConfig       `yaml:"context"`
+	Permission    PermissionConfig    `yaml:"permission"`
+	Plan          PlanConfig          `yaml:"plan"`
+	Hooks         HooksConfig         `yaml:"hooks"`
+	Web           WebConfig           `yaml:"web"`
+	Session       SessionConfig       `yaml:"session"`
+	Memory        MemoryConfig        `yaml:"memory"`
+	Logging       LoggingConfig       `yaml:"logging"`
+	Audit         AuditConfig         `yaml:"audit"`
+	RateLimit     RateLimitConfig     `yaml:"rate_limit"`
+	Cache   CacheConfig   `yaml:"cache"`
+	Watcher WatcherConfig `yaml:"watcher"`
+	DiffPreview   DiffPreviewConfig   `yaml:"diff_preview"`
+	Semantic      SemanticConfig      `yaml:"semantic"`
+	Contract      ContractConfig      `yaml:"contract"`
+	MCP           MCPConfig           `yaml:"mcp"`
+	Update        UpdateConfig        `yaml:"update"`
+
+	// Runtime version information
+	Version string `yaml:"-"`
 }
 
 // APIConfig holds API-related settings.
@@ -318,6 +322,20 @@ type MCPServerConfig struct {
 	ToolPrefix  string            `yaml:"tool_prefix,omitempty"` // Prefix for tool names
 }
 
+// UpdateConfig holds self-update settings.
+type UpdateConfig struct {
+	Enabled           bool          `yaml:"enabled"`            // Enable/disable auto-update system
+	AutoCheck         bool          `yaml:"auto_check"`         // Check for updates on startup
+	CheckInterval     time.Duration `yaml:"check_interval"`     // Interval between automatic checks
+	AutoDownload      bool          `yaml:"auto_download"`      // Auto-download updates (not install)
+	IncludePrerelease bool          `yaml:"include_prerelease"` // Include beta/rc versions
+	Channel           string        `yaml:"channel"`            // Update channel: stable, beta, nightly
+	GitHubRepo        string        `yaml:"github_repo"`        // GitHub repo for updates
+	MaxBackups        int           `yaml:"max_backups"`        // Max backup versions to keep
+	VerifyChecksum    bool          `yaml:"verify_checksum"`    // Verify downloaded file checksums
+	NotifyOnly        bool          `yaml:"notify_only"`        // Only notify, don't prompt to install
+}
+
 // DefaultConfig returns the default configuration.
 func DefaultConfig() *Config {
 	return &Config{
@@ -465,6 +483,18 @@ func DefaultConfig() *Config {
 		MCP: MCPConfig{
 			Enabled: false, // Disabled by default
 			Servers: []MCPServerConfig{},
+		},
+		Update: UpdateConfig{
+			Enabled:           true,           // Enabled by default
+			AutoCheck:         true,           // Check on startup
+			CheckInterval:     24 * time.Hour, // Check once per day
+			AutoDownload:      false,          // Require manual download
+			IncludePrerelease: false,          // Only stable releases
+			Channel:           "stable",       // Stable channel
+			GitHubRepo:        "user/gokin",   // Should be updated to actual repo
+			MaxBackups:        3,              // Keep 3 backups
+			VerifyChecksum:    true,           // Always verify checksums
+			NotifyOnly:        false,          // Allow prompting for install
 		},
 	}
 }

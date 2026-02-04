@@ -362,7 +362,11 @@ func (c *GeminiClient) doGenerateContentStream(ctx context.Context, contents []*
 				select {
 				case <-ctx.Done():
 					hasError = true
-					chunks <- ResponseChunk{Error: ctx.Err(), Done: true}
+					// Non-blocking send - channel might be full or receiver gone
+					select {
+					case chunks <- ResponseChunk{Error: ctx.Err(), Done: true}:
+					default:
+					}
 					return
 
 				case <-warningTimer.C:
@@ -427,7 +431,11 @@ func (c *GeminiClient) doGenerateContentStream(ctx context.Context, contents []*
 					case chunks <- chunk:
 					case <-ctx.Done():
 						hasError = true // Treat context cancellation as error for token return
-						chunks <- ResponseChunk{Error: ctx.Err(), Done: true}
+						// Non-blocking send - channel might be full or receiver gone
+						select {
+						case chunks <- ResponseChunk{Error: ctx.Err(), Done: true}:
+						default:
+						}
 						return
 					}
 

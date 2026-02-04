@@ -373,24 +373,49 @@ func (t *GrepTool) searchFile(filePath string, re *regexp.Regexp, contextLines i
 	}
 	defer file.Close()
 
-	var matches []grepMatch
+	// Read all lines for context support
+	var allLines []string
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 
-	lineNum := 0
 	for scanner.Scan() {
-		lineNum++
-		line := scanner.Text()
+		allLines = append(allLines, scanner.Text())
+	}
 
+	var matches []grepMatch
+	matchedLines := make(map[int]bool) // Track which lines are already included
+
+	for lineNum, line := range allLines {
 		if re.MatchString(line) {
-			// Truncate long lines
-			if len(line) > 500 {
-				line = line[:500] + "..."
+			// Add context lines before
+			start := lineNum - contextLines
+			if start < 0 {
+				start = 0
 			}
-			matches = append(matches, grepMatch{
-				lineNum: lineNum,
-				line:    line,
-			})
+
+			// Add context lines after
+			end := lineNum + contextLines
+			if end >= len(allLines) {
+				end = len(allLines) - 1
+			}
+
+			// Add all lines in range (including match itself)
+			for i := start; i <= end; i++ {
+				if matchedLines[i] {
+					continue // Skip already added lines
+				}
+				matchedLines[i] = true
+
+				contextLine := allLines[i]
+				// Truncate long lines
+				if len(contextLine) > 500 {
+					contextLine = contextLine[:500] + "..."
+				}
+				matches = append(matches, grepMatch{
+					lineNum: i + 1, // 1-indexed
+					line:    contextLine,
+				})
+			}
 		}
 	}
 
@@ -410,4 +435,104 @@ func isBinaryFile(path string) bool {
 
 	ext := strings.ToLower(filepath.Ext(path))
 	return binaryExts[ext]
+}
+
+// SupportsStreaming returns true as grep supports streaming output.
+func (t *GrepTool) SupportsStreaming() bool {
+	return true
+}
+
+// ExecuteStreaming runs grep with streaming output for large result sets.
+func (t *GrepTool) ExecuteStreaming(ctx context.Context, args map[string]any) (*StreamingToolResult, error) {
+	pattern, _ := GetString(args, "pattern")
+	searchPath := GetStringDefault(args, "path", t.workDir)
+	globPattern := GetStringDefault(args, "glob", "")
+	caseInsensitive := GetBoolDefault(args, "case_insensitive", false)
+	contextLines := GetIntDefault(args, "context_lines", 0)
+
+	// Make path absolute
+	if !filepath.IsAbs(searchPath) {
+		searchPath = filepath.Join(t.workDir, searchPath)
+	}
+
+	// Validate path
+	if t.pathValidator != nil {
+		validPath, err := t.pathValidator.Validate(searchPath)
+		if err != nil {
+			return nil, fmt.Errorf("path validation failed: %s", err)
+		}
+		searchPath = validPath
+	}
+
+	// Compile regex
+	regexPattern := pattern
+	if caseInsensitive {
+		regexPattern = "(?i)" + pattern
+	}
+	re, err := regexp.Compile(regexPattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid regex: %s", err)
+	}
+
+	// Get files to search
+	files, err := t.getFiles(searchPath, globPattern)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create streaming result
+	result, chunks, errChan, complete := NewStreamingToolResult(100)
+
+	go func() {
+		defer complete()
+
+		const maxMatches = 500
+		matchCount := 0
+		fileCount := 0
+
+		// Send header
+		chunks <- fmt.Sprintf("Searching %d files for pattern: %s\n\n", len(files), pattern)
+
+		for _, file := range files {
+			select {
+			case <-ctx.Done():
+				errChan <- ctx.Err()
+				return
+			default:
+			}
+
+			if matchCount >= maxMatches {
+				chunks <- fmt.Sprintf("\n... (reached %d match limit)\n", maxMatches)
+				break
+			}
+
+			matches := t.searchFile(file, re, contextLines)
+			if len(matches) == 0 {
+				continue
+			}
+
+			fileCount++
+			relPath, _ := filepath.Rel(t.workDir, file)
+			if relPath == "" {
+				relPath = file
+			}
+
+			for _, match := range matches {
+				if matchCount >= maxMatches {
+					break
+				}
+				chunks <- fmt.Sprintf("%s:%d: %s\n", relPath, match.lineNum, match.line)
+				matchCount++
+			}
+		}
+
+		// Send summary
+		if matchCount == 0 {
+			chunks <- "No matches found."
+		} else {
+			chunks <- fmt.Sprintf("\nFound %d match(es) in %d file(s).\n", matchCount, fileCount)
+		}
+	}()
+
+	return result, nil
 }

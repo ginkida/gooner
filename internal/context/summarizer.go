@@ -233,6 +233,35 @@ func (s *Summarizer) ExtractKeyInfo(messages []*genai.Content) KeyInfo {
 	return info
 }
 
+// DistillToolResult summarizes a large tool result using the LLM.
+func (s *Summarizer) DistillToolResult(ctx context.Context, toolName string, content string) (string, error) {
+	prompt := fmt.Sprintf(`Summarize the output of the tool "%s". 
+The output is very long and needs to be distilled for a conversation history. 
+Keep:
+- Key information (e.g., specific errors, successful outcomes, important statistics)
+- Crucial technical details
+- A high-level overview of what the output contains
+
+Be concise. If there are errors, make sure they are highlighted.
+
+TOOL OUTPUT:
+%s
+
+DISTILLED SUMMARY:`, toolName, content)
+
+	stream, err := s.client.SendMessage(ctx, prompt)
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := stream.Collect()
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("[Distilled Output for %s]:\n%s", toolName, resp.Text), nil
+}
+
 // KeyInfo holds extracted key information from a conversation.
 type KeyInfo struct {
 	FilesModified  []string

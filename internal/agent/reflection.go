@@ -15,24 +15,28 @@ type Reflector struct {
 
 // ErrorPattern matches an error and provides a recommendation.
 type ErrorPattern struct {
-	Pattern     *regexp.Regexp
-	Category    string
-	Suggestion  string
-	ShouldRetry bool
-	Alternative string // Alternative tool or approach to suggest
+	Pattern            *regexp.Regexp
+	Category           string
+	Suggestion         string
+	ShouldRetry        bool
+	ShouldRetryWithFix bool   // Whether we can suggest a specific fix
+	SuggestedFix       string // The command or step to fix the error
+	Alternative        string // Alternative tool or approach to suggest
 }
 
 // Reflection contains analysis of a tool failure.
 type Reflection struct {
-	ToolName       string
-	Error          string
-	Category       string
-	Suggestion     string
-	ShouldRetry    bool
-	Alternative    string
-	Intervention   string // Message to inject into agent history
-	LearnedContext string // Context from previously learned errors
-	LearnedEntryID string // ID of the learned entry used (for feedback)
+	ToolName           string
+	Error              string
+	Category           string
+	Suggestion         string
+	ShouldRetry        bool
+	ShouldRetryWithFix bool
+	SuggestedFix       string
+	Alternative        string
+	Intervention       string // Message to inject into agent history
+	LearnedContext     string // Context from previously learned errors
+	LearnedEntryID     string // ID of the learned entry used (for feedback)
 }
 
 // NewReflector creates a new reflector with default error patterns.
@@ -53,7 +57,13 @@ func (r *Reflector) GetErrorStore() *memory.ErrorStore {
 }
 
 // Analyze examines a tool error and returns recovery recommendations.
+// Deprecated: use Reflect instead.
 func (r *Reflector) Analyze(toolName string, args map[string]any, errorMsg string) *Reflection {
+	return r.Reflect(toolName, args, errorMsg)
+}
+
+// Reflect examines a tool error and returns recovery recommendations.
+func (r *Reflector) Reflect(toolName string, args map[string]any, errorMsg string) *Reflection {
 	reflection := &Reflection{
 		ToolName: toolName,
 		Error:    errorMsg,
@@ -81,6 +91,8 @@ func (r *Reflector) Analyze(toolName string, args map[string]any, errorMsg strin
 			reflection.Category = pattern.Category
 			reflection.Suggestion = pattern.Suggestion
 			reflection.ShouldRetry = pattern.ShouldRetry
+			reflection.ShouldRetryWithFix = pattern.ShouldRetryWithFix
+			reflection.SuggestedFix = pattern.SuggestedFix
 			reflection.Alternative = pattern.Alternative
 
 			// Build intervention message based on context
@@ -211,11 +223,13 @@ func defaultErrorPatterns() []ErrorPattern {
 
 		// Command/executable errors
 		{
-			Pattern:     regexp.MustCompile(`command not found|executable.*not found|unknown command|not recognized`),
-			Category:    "command_not_found",
-			Suggestion:  "The command doesn't exist in PATH. Check spelling, install the required package, or use an absolute path.",
-			ShouldRetry: false,
-			Alternative: "",
+			Pattern:            regexp.MustCompile(`command not found|executable.*not found|unknown command|not recognized`),
+			Category:           "command_not_found",
+			Suggestion:         "The command doesn't exist in PATH. Check spelling, install the required package, or use an absolute path.",
+			ShouldRetry:        false,
+			ShouldRetryWithFix: true,
+			SuggestedFix:       "Check if the binary is installed or use full path.",
+			Alternative:        "",
 		},
 		{
 			Pattern:     regexp.MustCompile(`no such (program|command|binary)`),

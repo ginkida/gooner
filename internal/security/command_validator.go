@@ -149,8 +149,9 @@ func NewCommandValidator() *CommandValidator {
 
 		// Shell injection separators and constructs
 		regexp.MustCompile(`[;&|]\s*(ba)?sh`),                 // ;sh, |sh, &sh
-		regexp.MustCompile(`\$\(.*\)`),                         // $(...) command substitution (risky in some contexts)
-		regexp.MustCompile("`.*`"),                             // `...` backticks substitution
+		regexp.MustCompile(`\$\(\s*.*\s*\)`),                   // $( ... ) command substitution with spaces
+		regexp.MustCompile("`[^`]*`"),                          // `...` backticks substitution
+		regexp.MustCompile(`\$\{[^}]+\}`),                      // ${...} parameter expansion (can be dangerous)
 		regexp.MustCompile(`(?i)eval\s+`),                      // eval (broad match)
 		regexp.MustCompile(`>\s*/dev/(tcp|udp)/`),              // redundant but safer with separators
 	}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -224,7 +225,7 @@ func (m *HistoryManager) ListSessions() ([]SessionInfo, error) {
 			continue
 		}
 
-		sessionID := entry.Name()[:len(entry.Name())-5]
+		sessionID := strings.TrimSuffix(entry.Name(), ".json")
 		state, err := m.LoadFull(sessionID)
 		if err != nil {
 			continue // Skip invalid files
@@ -236,6 +237,7 @@ func (m *HistoryManager) ListSessions() ([]SessionInfo, error) {
 			LastActive:   state.LastActive,
 			Summary:      state.Summary,
 			MessageCount: len(state.History),
+			WorkDir:      state.WorkDir,
 		})
 	}
 

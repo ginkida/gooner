@@ -546,7 +546,11 @@ func (c *AnthropicClient) doStreamRequest(ctx context.Context, requestBody map[s
 				select {
 				case <-ctx.Done():
 					logging.Debug("context cancelled, stopping stream processing")
-					chunks <- ResponseChunk{Error: ctx.Err(), Done: true}
+					// Non-blocking send - channel might be full or receiver gone
+					select {
+					case chunks <- ResponseChunk{Error: ctx.Err(), Done: true}:
+					default:
+					}
 					return
 
 				case <-warningTimer.C:

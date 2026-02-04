@@ -88,6 +88,16 @@ func (m *ToastManager) ShowError(message string) {
 	m.Show(ToastError, "Error", message, 5*time.Second)
 }
 
+// ShowErrorWithHint displays an error toast with optional actionable hint.
+// If a matching error pattern is found, appends hint: "Error message → Hint"
+func (m *ToastManager) ShowErrorWithHint(message string) {
+	hint := GetCompactHint(message)
+	if hint != "" {
+		message = message + " → " + hint
+	}
+	m.Show(ToastError, "Error", message, 5*time.Second)
+}
+
 // ShowInfo displays an info toast.
 func (m *ToastManager) ShowInfo(message string) {
 	m.Show(ToastInfo, "Info", message, 3*time.Second)
@@ -151,91 +161,44 @@ func (m *ToastManager) View(width int) string {
 	return strings.Join(lines, "\n")
 }
 
-// renderToast renders a single toast notification.
+// renderToast renders a single toast as compact single line.
+// Format: ✓ Message (no borders, minimal space)
 func (m *ToastManager) renderToast(toast Toast, width int) string {
-	// Icon and color based on type
 	var icon string
-	var borderColor lipgloss.Color
-	var titleColor lipgloss.Color
+	var iconColor lipgloss.Color
 
 	switch toast.Type {
 	case ToastSuccess:
-		icon = "✓"
-		borderColor = ColorSuccess
-		titleColor = ColorSuccess
+		icon, iconColor = "✓", ColorSuccess
 	case ToastError:
-		icon = "✗"
-		borderColor = ColorError
-		titleColor = ColorError
+		icon, iconColor = "✗", ColorError
 	case ToastWarning:
-		icon = "⚠"
-		borderColor = ColorWarning
-		titleColor = ColorWarning
+		icon, iconColor = "⚠", ColorWarning
 	default: // ToastInfo
-		icon = "ℹ"
-		borderColor = ColorInfo
-		titleColor = ColorInfo
+		icon, iconColor = "ℹ", ColorInfo
 	}
 
-	// Calculate opacity based on remaining time
+	// Fade effect when nearing expiration
 	elapsed := time.Since(toast.CreatedAt)
 	remaining := toast.Duration - elapsed
-	opacity := 1.0
 	if remaining < 500*time.Millisecond {
-		opacity = float64(remaining) / float64(500*time.Millisecond)
+		iconColor = ColorDim
 	}
 
-	// Toast width (max 40 chars, min 20)
-	toastWidth := 40
-	if width < 60 {
-		toastWidth = 25
+	iconStyle := lipgloss.NewStyle().Foreground(iconColor).Bold(true)
+	msgStyle := lipgloss.NewStyle().Foreground(ColorMuted)
+
+	// Truncate message to fit width
+	msg := toast.Message
+	maxLen := width - 5
+	if maxLen < 20 {
+		maxLen = 20
+	}
+	if len(msg) > maxLen {
+		msg = msg[:maxLen-1] + "…"
 	}
 
-	// Styles
-	containerStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(borderColor).
-		Padding(0, 1).
-		Width(toastWidth)
-
-	iconStyle := lipgloss.NewStyle().
-		Foreground(titleColor).
-		Bold(true)
-
-	titleStyle := lipgloss.NewStyle().
-		Foreground(titleColor).
-		Bold(true)
-
-	messageStyle := lipgloss.NewStyle().
-		Foreground(ColorText)
-
-	// Apply fade effect
-	if opacity < 1.0 {
-		containerStyle = containerStyle.Foreground(ColorDim)
-		messageStyle = messageStyle.Foreground(ColorDim)
-	}
-
-	// Build content
-	var content strings.Builder
-
-	// Title line with icon
-	content.WriteString(iconStyle.Render(icon))
-	content.WriteString(" ")
-	content.WriteString(titleStyle.Render(toast.Title))
-
-	// Message (if present)
-	if toast.Message != "" {
-		content.WriteString("\n")
-		// Truncate message if too long
-		msg := toast.Message
-		maxMsgLen := toastWidth - 4
-		if len(msg) > maxMsgLen {
-			msg = msg[:maxMsgLen-3] + "..."
-		}
-		content.WriteString(messageStyle.Render(msg))
-	}
-
-	return containerStyle.Render(content.String())
+	return iconStyle.Render(icon) + " " + msgStyle.Render(msg)
 }
 
 // Clear removes all toasts.

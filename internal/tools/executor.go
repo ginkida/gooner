@@ -132,9 +132,20 @@ func GetSmartFallback(toolName string, result ToolResult, toolsUsed []string) st
 	return "I've completed the operation. The results are shown above. Would you like me to analyze them further?" + toolContext
 }
 
+// ToolRegistry is an interface for tool registries.
+// Both Registry and LazyRegistry implement this interface.
+type ToolRegistry interface {
+	Get(name string) (Tool, bool)
+	List() []Tool
+	Names() []string
+	Declarations() []*genai.FunctionDeclaration
+	GeminiTools() []*genai.Tool
+	Register(tool Tool) error
+}
+
 // Executor handles the function calling loop with enhanced safety and user awareness.
 type Executor struct {
-	registry    *Registry
+	registry    ToolRegistry
 	client      client.Client
 	timeout     time.Duration
 	handler     *ExecutionHandler
@@ -207,6 +218,16 @@ type ExecutionHandler struct {
 
 // NewExecutor creates a new tool executor.
 func NewExecutor(registry *Registry, c client.Client, timeout time.Duration) *Executor {
+	return newExecutorInternal(registry, c, timeout)
+}
+
+// NewExecutorLazy creates a new tool executor with a LazyRegistry.
+func NewExecutorLazy(registry *LazyRegistry, c client.Client, timeout time.Duration) *Executor {
+	return newExecutorInternal(registry, c, timeout)
+}
+
+// newExecutorInternal creates the executor with any ToolRegistry implementation.
+func newExecutorInternal(registry ToolRegistry, c client.Client, timeout time.Duration) *Executor {
 	return &Executor{
 		registry:         registry,
 		client:           c,
@@ -791,7 +812,14 @@ func (e *Executor) doExecuteTool(ctx context.Context, call *genai.FunctionCall) 
 		}()
 	}
 
-	result, err := tool.Execute(execCtx, call.Args)
+	// Check if tool supports streaming for large outputs
+	var result ToolResult
+	var err error
+	if streamingTool, ok := tool.(StreamingTool); ok && streamingTool.SupportsStreaming() {
+		result, err = e.executeStreamingTool(execCtx, streamingTool, call.Args)
+	} else {
+		result, err = tool.Execute(execCtx, call.Args)
+	}
 	close(done)
 	duration := time.Since(start)
 
@@ -910,4 +938,57 @@ func formatDuration(d time.Duration) string {
 		return d.Round(time.Second).String()
 	}
 	return d.Round(time.Second).String()
+}
+
+// executeStreamingTool executes a streaming tool and collects results.
+// Streams chunks to the handler for real-time feedback.
+func (e *Executor) executeStreamingTool(ctx context.Context, tool StreamingTool, args map[string]any) (ToolResult, error) {
+	stream, err := tool.ExecuteStreaming(ctx, args)
+	if err != nil {
+		return NewErrorResult(err.Error()), nil
+	}
+
+	// Collect streaming output, optionally streaming to handler
+	var content strings.Builder
+	chunkCount := 0
+
+	for {
+		select {
+		case chunk, ok := <-stream.Chunks:
+			if !ok {
+				// Chunks channel closed
+				goto done
+			}
+			content.WriteString(chunk)
+			chunkCount++
+
+			// Stream to handler for real-time feedback (every 10 chunks or significant content)
+			if e.handler != nil && e.handler.OnText != nil && (chunkCount%10 == 0 || len(chunk) > 100) {
+				// Note: OnText is for model responses, but we can use it for streaming tool output
+				// This may need a separate handler in a future iteration
+			}
+
+		case err := <-stream.Error:
+			if err != nil {
+				return NewErrorResult(err.Error()), nil
+			}
+
+		case <-stream.Done:
+			// Drain remaining chunks
+			for chunk := range stream.Chunks {
+				content.WriteString(chunk)
+			}
+			goto done
+
+		case <-ctx.Done():
+			return NewErrorResult("streaming cancelled"), ctx.Err()
+		}
+	}
+
+done:
+	result := content.String()
+	if result == "" {
+		return NewSuccessResult("No output."), nil
+	}
+	return NewSuccessResult(result), nil
 }

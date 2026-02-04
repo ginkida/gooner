@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gokin/internal/contract"
+	"gokin/internal/logging"
 	"gokin/internal/plan"
 
 	"google.golang.org/genai"
@@ -124,7 +125,9 @@ func (t *VerifyPlanTool) Execute(ctx context.Context, args map[string]any) (Tool
 		} else {
 			c.Status = contract.StatusFailed
 		}
-		_ = store.Save(c)
+		if err := store.Save(c); err != nil {
+			logging.Debug("failed to save contract verification", "error", err, "contractID", c.ID)
+		}
 	}
 
 	// Format report

@@ -45,6 +45,9 @@ type SerializedFunc struct {
 
 // GetState returns the current state of the agent for serialization.
 func (a *Agent) GetState() *AgentState {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
+
 	history := make([]SerializedContent, len(a.history))
 	for i, content := range a.history {
 		history[i] = serializeContent(content)
@@ -75,6 +78,8 @@ func (a *Agent) RestoreHistory(state *AgentState) error {
 		history[i] = content
 	}
 
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	a.history = history
 	a.status = state.Status
 	a.startTime = state.StartTime
@@ -85,6 +90,8 @@ func (a *Agent) RestoreHistory(state *AgentState) error {
 
 // GetTurnCount returns the current turn count.
 func (a *Agent) GetTurnCount() int {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
 	return len(a.history) / 2
 }
 

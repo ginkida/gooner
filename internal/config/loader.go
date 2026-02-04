@@ -69,14 +69,44 @@ func loadFromFile(cfg *Config, path string) error {
 		return err
 	}
 
-	// Expand environment variables in the config file
-	expanded := os.ExpandEnv(string(data))
+	// Expand only safe environment variables in the config file
+	expanded := expandSafeEnvVars(string(data))
 
 	if err := yaml.Unmarshal([]byte(expanded), cfg); err != nil {
 		return fmt.Errorf("failed to parse config file %s: %w", path, err)
 	}
 
 	return nil
+}
+
+// safeEnvVars is the whitelist of environment variables that can be expanded in config files.
+// This prevents accidental exposure of sensitive variables like API keys, secrets, etc.
+var safeEnvVars = map[string]bool{
+	"HOME":            true,
+	"USER":            true,
+	"GOKIN_CONFIG_DIR": true,
+	"XDG_CONFIG_HOME": true,
+	"XDG_DATA_HOME":   true,
+	"XDG_CACHE_HOME":  true,
+	"TMPDIR":          true,
+	"TMP":             true,
+	"TEMP":            true,
+	"PWD":             true,
+	"SHELL":           true,
+	"LANG":            true,
+	"LC_ALL":          true,
+}
+
+// expandSafeEnvVars expands only whitelisted environment variables.
+// Non-whitelisted variables are left as-is (e.g., ${SECRET_KEY} stays as ${SECRET_KEY}).
+func expandSafeEnvVars(data string) string {
+	return os.Expand(data, func(key string) string {
+		if safeEnvVars[key] {
+			return os.Getenv(key)
+		}
+		// Return the original variable syntax for non-whitelisted vars
+		return "${" + key + "}"
+	})
 }
 
 // loadFromEnv loads configuration from environment variables.

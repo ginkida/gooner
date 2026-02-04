@@ -75,6 +75,8 @@ func (es *ErrorStore) load() error {
 		return err
 	}
 
+	es.mu.Lock()
+	defer es.mu.Unlock()
 	for _, entry := range entries {
 		es.entries[entry.ID] = entry
 		es.byType[entry.ErrorType] = append(es.byType[entry.ErrorType], entry.ID)

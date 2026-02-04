@@ -1028,6 +1028,11 @@ func (b *Builder) initUI() error {
 	b.tuiModel.SetAvailableModels(uiModels)
 	b.tuiModel.SetCurrentModel(b.cfg.Model.Name)
 
+	// Set version for display in status bar
+	if b.cfg.Version != "" {
+		b.tuiModel.SetVersion(b.cfg.Version)
+	}
+
 	if b.projectInfo.Type != appcontext.ProjectTypeUnknown {
 		b.tuiModel.SetProjectInfo(b.projectInfo.Type.String(), b.projectInfo.Name)
 	}

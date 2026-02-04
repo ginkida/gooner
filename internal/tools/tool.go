@@ -199,3 +199,76 @@ func ShouldSkipDiff(ctx context.Context) bool {
 	v, _ := ctx.Value(skipDiffKeyType{}).(bool)
 	return v
 }
+
+// StreamingToolResult represents a tool result that streams its output.
+type StreamingToolResult struct {
+	Chunks <-chan string    // Chunks of output
+	Done   <-chan struct{}  // Signals completion
+	Error  <-chan error     // Error channel
+}
+
+// StreamingTool is an optional interface for tools with large outputs.
+// Tools implementing this interface can stream results incrementally
+// instead of returning all content at once.
+type StreamingTool interface {
+	Tool
+	// ExecuteStreaming runs the tool with streaming output.
+	ExecuteStreaming(ctx context.Context, args map[string]any) (*StreamingToolResult, error)
+	// SupportsStreaming returns true if the tool supports streaming.
+	SupportsStreaming() bool
+}
+
+// CollectStreamingResult collects all chunks from a streaming result.
+// Returns the complete content and any error that occurred.
+func CollectStreamingResult(sr *StreamingToolResult) (string, error) {
+	if sr == nil {
+		return "", nil
+	}
+
+	var content string
+	for {
+		select {
+		case chunk, ok := <-sr.Chunks:
+			if !ok {
+				// Chunks channel closed, check for error
+				select {
+				case err := <-sr.Error:
+					if err != nil {
+						return content, err
+					}
+				default:
+				}
+				return content, nil
+			}
+			content += chunk
+		case err := <-sr.Error:
+			if err != nil {
+				return content, err
+			}
+		case <-sr.Done:
+			// Drain remaining chunks
+			for chunk := range sr.Chunks {
+				content += chunk
+			}
+			return content, nil
+		}
+	}
+}
+
+// NewStreamingToolResult creates a new streaming result with the given buffer sizes.
+func NewStreamingToolResult(chunkBuffer int) (*StreamingToolResult, chan<- string, chan<- error, func()) {
+	chunks := make(chan string, chunkBuffer)
+	done := make(chan struct{})
+	errChan := make(chan error, 1)
+
+	complete := func() {
+		close(chunks)
+		close(done)
+	}
+
+	return &StreamingToolResult{
+		Chunks: chunks,
+		Done:   done,
+		Error:  errChan,
+	}, chunks, errChan, complete
+}

@@ -154,6 +154,11 @@ func (m *Model) SetGitBranch(branch string) {
 	m.gitBranch = branch
 }
 
+// SetVersion sets the application version for display.
+func (m *Model) SetVersion(version string) {
+	m.version = version
+}
+
 // SetPaletteProvider sets the palette provider for command fetching.
 func (m *Model) SetPaletteProvider(provider PaletteProvider) {
 	if m.commandPalette != nil {

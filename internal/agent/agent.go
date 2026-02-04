@@ -14,6 +14,7 @@ import (
 	"gokin/internal/config"
 	ctxmgr "gokin/internal/context"
 	"gokin/internal/logging"
+	"gokin/internal/memory"
 	"gokin/internal/permission"
 	"gokin/internal/tools"
 
@@ -27,7 +28,7 @@ type Agent struct {
 	Model        string
 	client       client.Client
 	registry     *tools.Registry
-	baseRegistry *tools.Registry
+	baseRegistry tools.ToolRegistry
 	messenger    tools.Messenger
 	permissions  *permission.Manager
 	timeout      time.Duration
@@ -70,6 +71,7 @@ type Agent struct {
 
 	// Self-reflection for error recovery
 	reflector *Reflector
+	learning  *memory.ProjectLearning
 
 	// Autonomous delegation strategy
 	delegation *DelegationStrategy
@@ -88,15 +90,28 @@ type Agent struct {
 	toolsUsed []string
 	toolsMu   sync.Mutex
 
+	// State protection for concurrent access to status, history, startTime, endTime
+	stateMu sync.RWMutex
+
 	// Agent Scratchpad (Phase 7)
 	Scratchpad string
 
+	// Pinned Context (Custom Improvement)
+	PinnedContext string
+
 	// Tool activity callback for UI updates
 	onToolActivity func(agentID, toolName string, args map[string]any, status string)
+
+	// Checkpoint support
+	store              *AgentStore
+	autoCheckpoint     bool // Enable auto-checkpoint every N turns
+	checkpointInterval int  // Number of turns between auto-checkpoints
+	lastCheckpointTurn int  // Last turn when checkpoint was saved
+	lastThoughtTurn    int  // Last turn with a thought
 }
 
 // NewAgent creates a new agent with the specified type and filtered tools.
-func NewAgent(agentType AgentType, c client.Client, baseRegistry *tools.Registry, workDir string, maxTurns int, model string, permManager *permission.Manager, ctxCfg *config.ContextConfig) *Agent {
+func NewAgent(agentType AgentType, c client.Client, baseRegistry tools.ToolRegistry, workDir string, maxTurns int, model string, permManager *permission.Manager, ctxCfg *config.ContextConfig) *Agent {
 	id := generateAgentID()
 
 	// Create filtered registry based on agent type
@@ -138,11 +153,36 @@ func NewAgent(agentType AgentType, c client.Client, baseRegistry *tools.Registry
 		}
 	}
 
+	// Wire up PinContext tool (Custom Improvement)
+	if pt, ok := agent.registry.Get("pin_context"); ok {
+		if ptt, ok := pt.(*tools.PinContextTool); ok {
+			ptt.SetUpdater(agent.SetPinnedContext)
+		}
+	}
+
+	// Wire up HistorySearch tool (Custom Improvement)
+	if ht, ok := agent.registry.Get("history_search"); ok {
+		if htt, ok := ht.(*tools.HistorySearchTool); ok {
+			htt.SetHistoryGetter(func() []*genai.Content { return agent.history })
+		}
+	}
+
 	// Initialize context management tools if config provided
 	if ctxCfg != nil {
 		agent.tokenCounter = ctxmgr.NewTokenCounter(agent.client, agent.Model, ctxCfg)
 		agent.summarizer = ctxmgr.NewSummarizer(agent.client)
 		agent.compactor = ctxmgr.NewResultCompactor(ctxCfg.ToolResultMaxChars)
+	}
+
+	// Initialize project learning
+	if pl, err := memory.NewProjectLearning(workDir); err == nil {
+		agent.learning = pl
+		// Inject into memorize tool if it exists
+		if mt, ok := agent.registry.Get("memorize"); ok {
+			if mtt, ok := mt.(interface{ SetLearning(*memory.ProjectLearning) }); ok {
+				mtt.SetLearning(pl)
+			}
+		}
 	}
 
 	// Initialize self-reflection capability
@@ -167,7 +207,7 @@ func NewAgent(agentType AgentType, c client.Client, baseRegistry *tools.Registry
 }
 
 // NewAgentWithDynamicType creates a new agent with a dynamic type configuration.
-func NewAgentWithDynamicType(dynType *DynamicAgentType, c client.Client, baseRegistry *tools.Registry, workDir string, maxTurns int, model string, permManager *permission.Manager, ctxCfg *config.ContextConfig) *Agent {
+func NewAgentWithDynamicType(dynType *DynamicAgentType, c client.Client, baseRegistry tools.ToolRegistry, workDir string, maxTurns int, model string, permManager *permission.Manager, ctxCfg *config.ContextConfig) *Agent {
 	id := generateAgentID()
 
 	// Create filtered registry based on dynamic type's allowed tools
@@ -210,11 +250,36 @@ func NewAgentWithDynamicType(dynType *DynamicAgentType, c client.Client, baseReg
 		}
 	}
 
+	// Wire up PinContext tool (Custom Improvement)
+	if pt, ok := agent.registry.Get("pin_context"); ok {
+		if ptt, ok := pt.(*tools.PinContextTool); ok {
+			ptt.SetUpdater(agent.SetPinnedContext)
+		}
+	}
+
+	// Wire up HistorySearch tool (Custom Improvement)
+	if ht, ok := agent.registry.Get("history_search"); ok {
+		if htt, ok := ht.(*tools.HistorySearchTool); ok {
+			htt.SetHistoryGetter(func() []*genai.Content { return agent.history })
+		}
+	}
+
 	// Initialize context management
 	if ctxCfg != nil {
 		agent.tokenCounter = ctxmgr.NewTokenCounter(agent.client, agent.Model, ctxCfg)
 		agent.summarizer = ctxmgr.NewSummarizer(agent.client)
 		agent.compactor = ctxmgr.NewResultCompactor(ctxCfg.ToolResultMaxChars)
+	}
+
+	// Initialize project learning
+	if pl, err := memory.NewProjectLearning(workDir); err == nil {
+		agent.learning = pl
+		// Inject into memorize tool if it exists
+		if mt, ok := agent.registry.Get("memorize"); ok {
+			if mtt, ok := mt.(interface{ SetLearning(*memory.ProjectLearning) }); ok {
+				mtt.SetLearning(pl)
+			}
+		}
 	}
 
 	agent.reflector = NewReflector()
@@ -224,12 +289,17 @@ func NewAgentWithDynamicType(dynType *DynamicAgentType, c client.Client, baseReg
 }
 
 // createFilteredRegistryFromList creates a registry with only the specified tools.
-func createFilteredRegistryFromList(allowedTools []string, baseRegistry *tools.Registry) *tools.Registry {
+func createFilteredRegistryFromList(allowedTools []string, baseRegistry tools.ToolRegistry) *tools.Registry {
+	filtered := tools.NewRegistry()
+
 	if len(allowedTools) == 0 {
-		return baseRegistry // All tools allowed
+		// All tools allowed - copy all from base registry
+		for _, tool := range baseRegistry.List() {
+			_ = filtered.Register(tool)
+		}
+		return filtered
 	}
 
-	filtered := tools.NewRegistry()
 	allowedMap := make(map[string]bool)
 	for _, name := range allowedTools {
 		allowedMap[name] = true
@@ -259,9 +329,55 @@ func (a *Agent) SetOnScratchpadUpdate(fn func(string)) {
 	a.onScratchpadUpdate = fn
 }
 
+// SetPinnedContext sets the pinned context for the agent.
+func (a *Agent) SetPinnedContext(content string) {
+	a.PinnedContext = content
+}
+
+// GetPinnedContext returns the pinned context.
+func (a *Agent) GetPinnedContext() string {
+	return a.PinnedContext
+}
+
 // SetOnToolActivity sets the callback for tool activity reporting.
 func (a *Agent) SetOnToolActivity(fn func(agentID, toolName string, args map[string]any, status string)) {
 	a.onToolActivity = fn
+}
+
+// SetStore sets the agent store for checkpoint persistence.
+func (a *Agent) SetStore(store *AgentStore) {
+	a.store = store
+}
+
+// EnableAutoCheckpoint enables automatic checkpointing every N turns.
+func (a *Agent) EnableAutoCheckpoint(interval int) {
+	a.autoCheckpoint = true
+	a.checkpointInterval = interval
+	if a.checkpointInterval <= 0 {
+		a.checkpointInterval = 5 // Default: every 5 turns
+	}
+}
+
+// DisableAutoCheckpoint disables automatic checkpointing.
+func (a *Agent) DisableAutoCheckpoint() {
+	a.autoCheckpoint = false
+}
+
+// maybeAutoCheckpoint saves a checkpoint if auto-checkpoint is enabled and interval has passed.
+func (a *Agent) maybeAutoCheckpoint() {
+	if !a.autoCheckpoint || a.store == nil {
+		return
+	}
+
+	turnCount := a.GetTurnCount()
+	if turnCount-a.lastCheckpointTurn >= a.checkpointInterval {
+		if _, err := a.SaveCheckpoint("auto"); err != nil {
+			logging.Warn("auto-checkpoint failed", "agent_id", a.ID, "error", err)
+		} else {
+			a.lastCheckpointTurn = turnCount
+			logging.Debug("auto-checkpoint saved", "agent_id", a.ID, "turn", turnCount)
+		}
+	}
 }
 
 // SetOnInput sets the callback for requesting user input.
@@ -341,8 +457,8 @@ func (a *Agent) GetSharedMemory() *SharedMemory {
 // AddToolUsed tracks a tool that was used during execution.
 func (a *Agent) AddToolUsed(toolName string) {
 	a.toolsMu.Lock()
+	defer a.toolsMu.Unlock()
 	a.toolsUsed = append(a.toolsUsed, toolName)
-	a.toolsMu.Unlock()
 }
 
 // GetToolsUsed returns the list of tools used during execution.
@@ -409,12 +525,17 @@ func generateAgentID() string {
 }
 
 // createFilteredRegistry creates a registry with only allowed tools for the agent type.
-func createFilteredRegistry(agentType AgentType, baseRegistry *tools.Registry) *tools.Registry {
+func createFilteredRegistry(agentType AgentType, baseRegistry tools.ToolRegistry) *tools.Registry {
 	allowedTools := agentType.AllowedTools()
 
 	// If nil, all tools are allowed (general type)
 	if allowedTools == nil {
-		return baseRegistry
+		// Copy all tools to a new Registry
+		filtered := tools.NewRegistry()
+		for _, tool := range baseRegistry.List() {
+			_ = filtered.Register(tool)
+		}
+		return filtered
 	}
 
 	// Create new registry with filtered tools
@@ -435,8 +556,9 @@ func createFilteredRegistry(agentType AgentType, baseRegistry *tools.Registry) *
 
 // RequestTool dynamically adds a tool from the base registry to the agent's active registry.
 func (a *Agent) RequestTool(name string) error {
-	if a.registry == a.baseRegistry {
-		return nil // Already has all tools
+	// Check if already in active registry
+	if _, ok := a.registry.Get(name); ok {
+		return nil // Already have this tool
 	}
 
 	tool, ok := a.baseRegistry.Get(name)
@@ -465,8 +587,10 @@ func (a *Agent) ReceiveResponse(ctx context.Context, messageID string) (string, 
 
 // Run executes the agent with the given prompt and returns the result.
 func (a *Agent) Run(ctx context.Context, prompt string) (*AgentResult, error) {
+	a.stateMu.Lock()
 	a.status = AgentStatusRunning
 	a.startTime = time.Now()
+	a.stateMu.Unlock()
 
 	// Initialize progress
 	a.SetProgress(0, a.maxTurns, "Starting agent execution")
@@ -482,21 +606,28 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*AgentResult, error) {
 	systemPrompt := a.buildSystemPrompt()
 
 	// Initialize history with system context
+	a.stateMu.Lock()
 	a.history = []*genai.Content{
 		genai.NewContentFromText(systemPrompt, genai.RoleUser),
 		genai.NewContentFromText("I understand. I'll help with the task using only my allowed tools.", genai.RoleModel),
 	}
+	a.stateMu.Unlock()
 
 	// Execute the prompt through the function calling loop
 	var finalOutput strings.Builder
 	_, output, err := a.executeLoop(ctx, prompt, &finalOutput)
 	if err != nil {
+		a.stateMu.Lock()
 		a.status = AgentStatusFailed
 		a.endTime = time.Now()
+		endTime := a.endTime
+		startTime := a.startTime
+		a.stateMu.Unlock()
+
 		result.Status = AgentStatusFailed
 		result.Error = err.Error()
 		result.Output = output // Preserve partial output on failure
-		result.Duration = a.endTime.Sub(a.startTime)
+		result.Duration = endTime.Sub(startTime)
 
 		// Update progress with failure
 		a.SetProgress(a.currentStep, a.totalSteps, "Failed: "+err.Error())
@@ -504,12 +635,16 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*AgentResult, error) {
 		return result, err
 	}
 
+	a.stateMu.Lock()
 	a.status = AgentStatusCompleted
 	a.endTime = time.Now()
+	endTime := a.endTime
+	startTime := a.startTime
+	a.stateMu.Unlock()
 
 	result.Status = AgentStatusCompleted
 	result.Output = output
-	result.Duration = a.endTime.Sub(a.startTime)
+	result.Duration = endTime.Sub(startTime)
 	result.Completed = true
 
 	// Update progress with completion
@@ -529,6 +664,21 @@ func (a *Agent) buildSystemPrompt() string {
 	toolNames := a.registry.Names()
 	sb.WriteString(strings.Join(toolNames, ", "))
 	sb.WriteString("\n\n")
+
+	// Inject Pinned Context if provided (Custom Improvement)
+	if a.PinnedContext != "" {
+		sb.WriteString("═══════════════════════════════════════════════════════════════════════\n")
+		sb.WriteString("                         PINNED CONTEXT\n")
+		sb.WriteString("═══════════════════════════════════════════════════════════════════════\n")
+		sb.WriteString(a.PinnedContext)
+		sb.WriteString("\n═══════════════════════════════════════════════════════════════════════\n\n")
+	}
+
+	// Inject project-specific knowledge
+	if a.learning != nil {
+		sb.WriteString(a.learning.FormatForPrompt())
+		sb.WriteString("\n")
+	}
 
 	// Universal instructions for all agents
 	sb.WriteString("═══════════════════════════════════════════════════════════════════════\n")
@@ -909,6 +1059,9 @@ func (a *Agent) executeLoop(ctx context.Context, prompt string, output *strings.
 		default:
 		}
 
+		// Auto-checkpoint if enabled
+		a.maybeAutoCheckpoint()
+
 		// Check tokens and summarize if needed to prevent context overflow.
 		// We do this BEFORE getting model response to ensure we have room.
 		if a.tokenCounter != nil && a.summarizer != nil && a.ctxCfg != nil && a.ctxCfg.EnableAutoSummary {
@@ -1247,75 +1400,137 @@ func (a *Agent) getModelResponse(ctx context.Context) (*client.Response, error) 
 	return stream.Collect()
 }
 
-// executeTools executes the function calls.
+// executeTools executes the function calls with parallel execution for read-only tools.
 func (a *Agent) executeTools(ctx context.Context, calls []*genai.FunctionCall) []*genai.FunctionResponse {
 	results := make([]*genai.FunctionResponse, len(calls))
 
+	// Build index for result placement
+	callIndex := make(map[*genai.FunctionCall]int)
 	for i, call := range calls {
-		result := a.executeTool(ctx, call)
+		callIndex[call] = i
+	}
 
-		var reflection *Reflection
+	// Classify tools into parallel groups
+	classifier := NewToolDependencyClassifier()
+	groups := classifier.ClassifyDependencies(calls)
 
-		// Apply self-reflection on errors to provide recovery suggestions
-		if !result.Success && a.reflector != nil {
-			reflection = a.reflector.Analyze(call.Name, call.Args, result.Content)
-			if reflection.Intervention != "" {
-				// Enrich the error result with reflection analysis
-				result.Content = fmt.Sprintf("%s\n\n---\n**Self-Reflection:**\n%s",
-					result.Content, reflection.Intervention)
-
-				// Log reflection
-				logging.Info("agent reflected on error",
-					"agent_id", a.ID,
-					"tool", call.Name,
-					"category", reflection.Category,
-					"should_retry", reflection.ShouldRetry)
+	for _, group := range groups {
+		if group.Parallel && len(group.Calls) > 1 {
+			// Execute read-only tools in parallel
+			a.executeToolsParallel(ctx, group.Calls, results, callIndex)
+		} else {
+			// Execute sequentially (write tools or single tool)
+			for _, call := range group.Calls {
+				idx := callIndex[call]
+				results[idx] = a.executeToolWithReflection(ctx, call)
 			}
-		}
-
-		// Check for autonomous delegation opportunity
-		if !result.Success && a.delegation != nil && a.delegation.messenger != nil {
-			delCtx := &DelegationContext{
-				AgentType:      a.Type,
-				CurrentTurn:    a.currentStep,
-				MaxTurns:       a.maxTurns,
-				LastToolName:   call.Name,
-				LastToolError:  result.Content,
-				LastToolArgs:   call.Args,
-				ReflectionInfo: reflection,
-				StuckCount:     a.delegation.GetStuckCount(),
-			}
-
-			decision := a.delegation.Evaluate(delCtx)
-			if decision.ShouldDelegate {
-				// Execute delegation
-				delegationResponse, err := a.delegation.ExecuteDelegation(ctx, decision)
-				if err == nil && delegationResponse != "" {
-					// Append delegation result to the tool response
-					result.Content = fmt.Sprintf("%s\n\n---\n**Delegated to %s agent:**\n%s",
-						result.Content, decision.TargetType, delegationResponse)
-					result.Success = true // Mark as recovered
-
-					logging.Info("delegation successful",
-						"agent_id", a.ID,
-						"delegated_to", decision.TargetType,
-						"reason", decision.Reason)
-				}
-			}
-		}
-
-		// Compact result if it's too large before converting to map
-		if a.compactor != nil {
-			result = a.compactor.CompactForType(call.Name, result)
-		}
-
-		results[i] = &genai.FunctionResponse{
-			Name:     call.Name,
-			Response: result.ToMap(),
 		}
 	}
 
 	return results
+}
+
+// executeToolsParallel executes multiple tools concurrently.
+func (a *Agent) executeToolsParallel(ctx context.Context, calls []*genai.FunctionCall,
+	results []*genai.FunctionResponse, indexMap map[*genai.FunctionCall]int) {
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	semaphore := make(chan struct{}, 5) // Max 5 concurrent executions
+
+	for _, call := range calls {
+		wg.Add(1)
+		go func(fc *genai.FunctionCall) {
+			defer wg.Done()
+
+			// Acquire semaphore slot
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			case <-ctx.Done():
+				mu.Lock()
+				results[indexMap[fc]] = &genai.FunctionResponse{
+					Name:     fc.Name,
+					Response: tools.NewErrorResult("cancelled").ToMap(),
+				}
+				mu.Unlock()
+				return
+			}
+
+			result := a.executeToolWithReflection(ctx, fc)
+
+			mu.Lock()
+			results[indexMap[fc]] = result
+			mu.Unlock()
+		}(call)
+	}
+
+	wg.Wait()
+}
+
+// executeToolWithReflection executes a tool with reflection and delegation on failure.
+func (a *Agent) executeToolWithReflection(ctx context.Context, call *genai.FunctionCall) *genai.FunctionResponse {
+	result := a.executeTool(ctx, call)
+
+	var reflection *Reflection
+
+	// Apply self-reflection on errors to provide recovery suggestions
+	if !result.Success && a.reflector != nil {
+		reflection = a.reflector.Analyze(call.Name, call.Args, result.Content)
+		if reflection.Intervention != "" {
+			// Enrich the error result with reflection analysis
+			result.Content = fmt.Sprintf("%s\n\n---\n**Self-Reflection:**\n%s",
+				result.Content, reflection.Intervention)
+
+			// Log reflection
+			logging.Info("agent reflected on error",
+				"agent_id", a.ID,
+				"tool", call.Name,
+				"category", reflection.Category,
+				"should_retry", reflection.ShouldRetry)
+		}
+	}
+
+	// Check for autonomous delegation opportunity
+	if !result.Success && a.delegation != nil && a.delegation.messenger != nil {
+		delCtx := &DelegationContext{
+			AgentType:      a.Type,
+			CurrentTurn:    a.currentStep,
+			MaxTurns:       a.maxTurns,
+			LastToolName:   call.Name,
+			LastToolError:  result.Content,
+			LastToolArgs:   call.Args,
+			ReflectionInfo: reflection,
+			StuckCount:     a.delegation.GetStuckCount(),
+		}
+
+		decision := a.delegation.Evaluate(delCtx)
+		if decision.ShouldDelegate {
+			// Execute delegation
+			delegationResponse, err := a.delegation.ExecuteDelegation(ctx, decision)
+			if err == nil && delegationResponse != "" {
+				// Append delegation result to the tool response
+				result.Content = fmt.Sprintf("%s\n\n---\n**Delegated to %s agent:**\n%s",
+					result.Content, decision.TargetType, delegationResponse)
+				result.Success = true // Mark as recovered
+
+				logging.Info("delegation successful",
+					"agent_id", a.ID,
+					"delegated_to", decision.TargetType,
+					"reason", decision.Reason)
+			}
+		}
+	}
+
+	// Compact result if it's too large before converting to map
+	if a.compactor != nil {
+		result = a.compactor.CompactForType(call.Name, result)
+	}
+
+	return &genai.FunctionResponse{
+		Name:     call.Name,
+		Response: result.ToMap(),
+	}
 }
 
 // executeTool executes a single tool call with enhanced safety and retry logic.
@@ -1363,6 +1578,7 @@ func (a *Agent) executeTool(ctx context.Context, call *genai.FunctionCall) tools
 			if a.onToolActivity != nil {
 				a.onToolActivity(a.ID, call.Name, call.Args, "end")
 			}
+
 			// Success - return result
 			return result
 		}
@@ -1450,11 +1666,15 @@ func (a *Agent) buildResponseParts(resp *client.Response) []*genai.Part {
 
 // GetStatus returns the current agent status.
 func (a *Agent) GetStatus() AgentStatus {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
 	return a.status
 }
 
 // Cancel cancels the agent's execution.
 func (a *Agent) Cancel() {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	if a.status == AgentStatusRunning {
 		a.status = AgentStatusCancelled
 		a.endTime = time.Now()
@@ -1829,3 +2049,4 @@ func (a *Agent) requestPlanApproval(ctx context.Context, tree *PlanTree) error {
 		}
 	}
 }
+
