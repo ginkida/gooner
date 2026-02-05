@@ -16,12 +16,18 @@ import (
 	"gokin/internal/security"
 )
 
+// GlobPredictorInterface defines the interface for context predictors used by glob.
+type GlobPredictorInterface interface {
+	RecordAccess(path, accessType, fromFile string)
+}
+
 // GlobTool finds files matching a glob pattern.
 type GlobTool struct {
 	workDir       string
 	gitIgnore     *git.GitIgnore
 	cache         *cache.SearchCache
 	pathValidator *security.PathValidator
+	predictor     GlobPredictorInterface
 }
 
 // NewGlobTool creates a new GlobTool instance.
@@ -50,6 +56,11 @@ func (t *GlobTool) SetCache(c *cache.SearchCache) {
 func (t *GlobTool) SetAllowedDirs(dirs []string) {
 	allDirs := append([]string{t.workDir}, dirs...)
 	t.pathValidator = security.NewPathValidator(allDirs, false)
+}
+
+// SetPredictor sets the context predictor for access pattern learning.
+func (t *GlobTool) SetPredictor(p GlobPredictorInterface) {
+	t.predictor = p
 }
 
 func (t *GlobTool) Name() string {
@@ -243,6 +254,11 @@ func (t *GlobTool) Execute(ctx context.Context, args map[string]any) (ToolResult
 		}
 		builder.WriteString(relPath)
 		builder.WriteString("\n")
+
+		// Record access pattern for predictive loading
+		if t.predictor != nil {
+			t.predictor.RecordAccess(f.path, "glob", "")
+		}
 	}
 
 	return NewSuccessResult(builder.String()), nil

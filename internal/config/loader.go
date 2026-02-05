@@ -135,10 +135,22 @@ func loadFromEnv(cfg *Config) {
 
 // Validate validates the configuration.
 func (c *Config) Validate() error {
-	if c.API.APIKey == "" {
-		return ErrMissingAuth
+	// Check OAuth first
+	if c.API.HasOAuthToken("gemini") {
+		return nil
 	}
-	return nil
+
+	// Check API keys
+	if c.API.APIKey != "" || c.API.GeminiKey != "" || c.API.GLMKey != "" || c.API.DeepSeekKey != "" {
+		return nil
+	}
+
+	// Ollama doesn't require API key for local server
+	if c.API.GetActiveProvider() == "ollama" {
+		return nil
+	}
+
+	return ErrMissingAuth
 }
 
 // Error types for configuration validation.

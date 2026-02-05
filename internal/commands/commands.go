@@ -57,6 +57,7 @@ type AppInterface interface {
 	ApplyConfig(cfg *config.Config) error
 	GetVersion() string
 	AddSystemMessage(msg string)
+	GetAgentTypeRegistry() *agent.AgentTypeRegistry
 }
 
 // Handler manages slash commands.
@@ -89,6 +90,8 @@ func NewHandler() *Handler {
 	h.Register(&ConfigCommand{})
 	h.Register(&LoginCommand{})
 	h.Register(&LogoutCommand{})
+	h.Register(&OAuthLoginCommand{})
+	h.Register(&OAuthLogoutCommand{})
 	h.Register(&ProviderCommand{})
 	h.Register(&StatusCommand{})
 	h.Register(&ModelCommand{})
@@ -122,6 +125,11 @@ func NewHandler() *Handler {
 
 	// Register tree planner command
 	h.Register(&TreeStatsCommand{})
+
+	// Register agent type commands
+	h.Register(&RegisterAgentTypeCommand{})
+	h.Register(&ListAgentTypesCommand{})
+	h.Register(&UnregisterAgentTypeCommand{})
 
 	// Register clipboard commands (cross-platform)
 	h.Register(&CopyCommand{})

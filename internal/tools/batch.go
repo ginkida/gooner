@@ -14,10 +14,15 @@ import (
 	"gokin/internal/undo"
 )
 
+// BatchProgressCallback is called to report progress during batch operations.
+type BatchProgressCallback func(processed, total int, currentFile string, success bool)
+
 // BatchTool performs batch operations on multiple files.
 type BatchTool struct {
-	undoManager *undo.Manager
-	workDir     string
+	undoManager      *undo.Manager
+	workDir          string
+	progressCallback BatchProgressCallback
+	failureThreshold float64 // Stop if failure rate exceeds this (0.0 to 1.0, 0 = disabled)
 }
 
 // NewBatchTool creates a new BatchTool instance.
@@ -30,6 +35,24 @@ func NewBatchTool(workDir string) *BatchTool {
 // SetUndoManager sets the undo manager for tracking changes.
 func (t *BatchTool) SetUndoManager(manager *undo.Manager) {
 	t.undoManager = manager
+}
+
+// SetProgressCallback sets the progress callback for real-time updates.
+func (t *BatchTool) SetProgressCallback(callback BatchProgressCallback) {
+	t.progressCallback = callback
+}
+
+// SetFailureThreshold sets the failure threshold (0.0 to 1.0).
+// When the failure rate exceeds this threshold, the batch operation stops.
+// Set to 0 to disable (default).
+func (t *BatchTool) SetFailureThreshold(threshold float64) {
+	if threshold < 0 {
+		threshold = 0
+	}
+	if threshold > 1 {
+		threshold = 1
+	}
+	t.failureThreshold = threshold
 }
 
 func (t *BatchTool) Name() string {
@@ -84,6 +107,10 @@ func (t *BatchTool) Declaration() *genai.FunctionDeclaration {
 				"parallel": {
 					Type:        genai.TypeBoolean,
 					Description: "Execute operations in parallel (default: true)",
+				},
+				"failure_threshold": {
+					Type:        genai.TypeNumber,
+					Description: "Stop if failure rate exceeds this value (0.0 to 1.0, default: 0 = disabled)",
 				},
 			},
 			Required: []string{"operation"},
@@ -400,7 +427,7 @@ func (t *BatchTool) executeDelete(ctx context.Context, files []string, dryRun, p
 	return result
 }
 
-// executeParallel runs operations in parallel.
+// executeParallel runs operations in parallel with progress callbacks and failure threshold.
 func (t *BatchTool) executeParallel(ctx context.Context, files []string, operation func(string) error) BatchResult {
 	result := BatchResult{
 		TotalFiles: len(files),
@@ -409,11 +436,23 @@ func (t *BatchTool) executeParallel(ctx context.Context, files []string, operati
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
+	var processedCount int
+	var failureCount int
+	var shouldStop bool
 
 	// Limit concurrency
 	semaphore := make(chan struct{}, 10)
 
 	for _, path := range files {
+		// Check if we should stop due to failure threshold
+		mu.Lock()
+		if shouldStop {
+			result.Failed[path] = "stopped due to failure threshold"
+			mu.Unlock()
+			continue
+		}
+		mu.Unlock()
+
 		select {
 		case <-ctx.Done():
 			mu.Lock()
@@ -430,7 +469,15 @@ func (t *BatchTool) executeParallel(ctx context.Context, files []string, operati
 			defer wg.Done()
 			defer func() { <-semaphore }() // Release
 
-			// Check if context is already cancelled
+			// Check if context is already cancelled or should stop
+			mu.Lock()
+			if shouldStop {
+				result.Failed[p] = "stopped due to failure threshold"
+				mu.Unlock()
+				return
+			}
+			mu.Unlock()
+
 			select {
 			case <-ctx.Done():
 				mu.Lock()
@@ -442,15 +489,36 @@ func (t *BatchTool) executeParallel(ctx context.Context, files []string, operati
 
 			err := operation(p)
 			mu.Lock()
+			processedCount++
+			success := true
+
 			if err != nil {
+				success = false
 				if strings.Contains(err.Error(), "not found") {
 					result.Skipped = append(result.Skipped, p)
 				} else {
 					result.Failed[p] = err.Error()
+					failureCount++
+
+					// Check failure threshold
+					if t.failureThreshold > 0 && processedCount >= 3 {
+						currentFailureRate := float64(failureCount) / float64(processedCount)
+						if currentFailureRate > t.failureThreshold {
+							shouldStop = true
+							result.Failed["_threshold"] = fmt.Sprintf("failure rate %.1f%% exceeded threshold %.1f%%",
+								currentFailureRate*100, t.failureThreshold*100)
+						}
+					}
 				}
 			} else {
 				result.Succeeded = append(result.Succeeded, p)
 			}
+
+			// Call progress callback
+			if t.progressCallback != nil {
+				t.progressCallback(processedCount, len(files), p, success)
+			}
+
 			mu.Unlock()
 		}(path)
 	}

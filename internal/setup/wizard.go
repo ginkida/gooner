@@ -7,9 +7,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
+
+	"gokin/internal/auth"
 
 	"github.com/ollama/ollama/api"
 )
@@ -46,23 +50,28 @@ Choose your AI provider to get started.
 	authChoiceMessage = `
 %sChoose AI provider:%s
 
-  %s[1]%s Gemini (Cloud)   • Google's Gemini models
+  %s[1]%s Gemini (Google Account)
+                       • Use your Gemini subscription
+                       • Login with Google Account (OAuth)
+                       • No API key needed
+
+  %s[2]%s Gemini (API Key) • Google's Gemini models
                        • Free tier available
                        • Get key at: https://aistudio.google.com/apikey
 
-  %s[2]%s GLM (Cloud)      • GLM-4 models
+  %s[3]%s GLM (Cloud)      • GLM-4 models
                        • Budget-friendly (~$3/month)
                        • Get key from your GLM provider
 
-  %s[3]%s DeepSeek (Cloud) • DeepSeek Chat & Reasoner models
+  %s[4]%s DeepSeek (Cloud) • DeepSeek Chat & Reasoner models
                        • Powerful coding assistant
                        • Get key at: https://platform.deepseek.com/api_keys
 
-  %s[4]%s Ollama (Local)   • Run LLMs locally, no API key needed
+  %s[5]%s Ollama (Local)   • Run LLMs locally, no API key needed
                        • Privacy-focused, works offline
                        • Requires: ollama serve
 
-%sEnter your choice (1-4):%s `
+%sEnter your choice (1-5):%s `
 )
 
 // Spinner animation frames
@@ -76,7 +85,7 @@ func RunSetupWizard() error {
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
-		fmt.Printf(authChoiceMessage, colorYellow, colorReset, colorGreen, colorReset, colorGreen, colorReset, colorGreen, colorReset, colorGreen, colorReset, colorCyan, colorReset)
+		fmt.Printf(authChoiceMessage, colorYellow, colorReset, colorGreen, colorReset, colorGreen, colorReset, colorGreen, colorReset, colorGreen, colorReset, colorGreen, colorReset, colorCyan, colorReset)
 
 		choice, err := reader.ReadString('\n')
 		if err != nil {
@@ -87,15 +96,17 @@ func RunSetupWizard() error {
 
 		switch choice {
 		case "1":
-			return setupAPIKey(reader, "gemini")
+			return setupGeminiOAuth()
 		case "2":
-			return setupAPIKey(reader, "glm")
+			return setupAPIKey(reader, "gemini")
 		case "3":
-			return setupAPIKey(reader, "deepseek")
+			return setupAPIKey(reader, "glm")
 		case "4":
+			return setupAPIKey(reader, "deepseek")
+		case "5":
 			return setupOllama(reader)
 		default:
-			fmt.Printf("\n%s⚠ Invalid choice. Please enter 1, 2, 3, or 4.%s\n", colorRed, colorReset)
+			fmt.Printf("\n%s⚠ Invalid choice. Please enter 1, 2, 3, 4, or 5.%s\n", colorRed, colorReset)
 		}
 	}
 }
@@ -167,6 +178,149 @@ func setupAPIKey(reader *bufio.Reader, backend string) error {
 	showNextSteps()
 
 	return nil
+}
+
+func setupGeminiOAuth() error {
+	fmt.Printf("\n%s─── Gemini OAuth Setup ───%s\n", colorCyan, colorReset)
+	fmt.Printf("\n%sThis will open your browser for Google authentication.%s\n", colorYellow, colorReset)
+	fmt.Printf("%sYou'll use your Gemini subscription (not API credits).%s\n\n", colorYellow, colorReset)
+
+	// Create OAuth manager
+	manager := auth.NewGeminiOAuthManager()
+
+	// Generate auth URL
+	authURL, err := manager.GenerateAuthURL()
+	if err != nil {
+		return fmt.Errorf("failed to generate auth URL: %w", err)
+	}
+
+	// Start callback server
+	server := auth.NewCallbackServer(auth.GeminiOAuthCallbackPort, manager.GetState())
+	if err := server.Start(); err != nil {
+		return fmt.Errorf("failed to start callback server: %w", err)
+	}
+	defer server.Stop()
+
+	// Try to open browser
+	browserOpened := openBrowserForOAuth(authURL)
+
+	if browserOpened {
+		fmt.Printf("%sOpening browser for authentication...%s\n", colorGreen, colorReset)
+	} else {
+		fmt.Printf("%sCould not open browser automatically.%s\n", colorYellow, colorReset)
+		fmt.Printf("%sPlease open this URL in your browser:%s\n\n", colorYellow, colorReset)
+		fmt.Printf("  %s%s%s\n\n", colorBold, authURL, colorReset)
+	}
+
+	fmt.Printf("%sWaiting for authentication (timeout: 5 minutes)...%s\n", colorYellow, colorReset)
+
+	// Wait for callback with spinner
+	codeChan := make(chan string, 1)
+	errChan := make(chan error, 1)
+
+	go func() {
+		code, err := server.WaitForCode(auth.OAuthCallbackTimeout)
+		if err != nil {
+			errChan <- err
+		} else {
+			codeChan <- code
+		}
+	}()
+
+	// Show spinner while waiting
+	var code string
+	select {
+	case code = <-codeChan:
+		// Got code
+	case err := <-errChan:
+		return fmt.Errorf("authentication failed: %w", err)
+	}
+
+	fmt.Printf("\n%s✓ Authentication successful!%s\n", colorGreen, colorReset)
+
+	// Exchange code for tokens
+	done := make(chan bool)
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		done <- true
+	}()
+	spin("Exchanging authorization code...", done)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	token, err := manager.ExchangeCode(ctx, code)
+	if err != nil {
+		return fmt.Errorf("failed to exchange code: %w", err)
+	}
+
+	// Save to config
+	configPath, err := getConfigPath()
+	if err != nil {
+		return fmt.Errorf("failed to get config path: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// Build config with OAuth
+	// Note: Code Assist API supports: gemini-2.5-flash, gemini-2.5-pro, gemini-3-flash-preview, gemini-3-pro-preview
+	content := fmt.Sprintf(`api:
+  active_provider: gemini
+  gemini_oauth:
+    access_token: %s
+    refresh_token: %s
+    expires_at: %d
+    email: %s
+model:
+  provider: gemini
+  name: gemini-2.5-flash
+`, token.AccessToken, token.RefreshToken, token.ExpiresAt.Unix(), token.Email)
+
+	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	email := token.Email
+	if email == "" {
+		email = "Google Account"
+	}
+
+	fmt.Printf("\n%s✓ Logged in as %s via OAuth!%s\n", colorGreen, email, colorReset)
+	fmt.Printf("  %sConfig:%s %s\n", colorYellow, colorReset, configPath)
+	fmt.Printf("  %sModel:%s gemini-2.5-flash\n", colorYellow, colorReset)
+
+	// Show next steps
+	showNextSteps()
+
+	return nil
+}
+
+// openBrowserForOAuth opens a URL in the default browser
+func openBrowserForOAuth(url string) bool {
+	var cmd *exec.Cmd
+
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "linux":
+		if _, err := exec.LookPath("xdg-open"); err == nil {
+			cmd = exec.Command("xdg-open", url)
+		} else if _, err := exec.LookPath("google-chrome"); err == nil {
+			cmd = exec.Command("google-chrome", url)
+		} else if _, err := exec.LookPath("firefox"); err == nil {
+			cmd = exec.Command("firefox", url)
+		} else {
+			return false
+		}
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", url)
+	default:
+		return false
+	}
+
+	return cmd.Start() == nil
 }
 
 func setupOllama(reader *bufio.Reader) error {

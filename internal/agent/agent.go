@@ -58,7 +58,6 @@ type Agent struct {
 	// Mental loop detection tracking
 	callHistory    map[string]int // Map of tool_name:arguments -> count
 	callHistoryMu  sync.Mutex     // Protects callHistory map
-	lastThought    string         // Store the last reasoning/thought
 	loopIntervened bool           // Flag to indicate if loop intervention occurred
 
 	// Project context injection for sub-agents
@@ -117,7 +116,6 @@ type Agent struct {
 	autoCheckpoint     bool // Enable auto-checkpoint every N turns
 	checkpointInterval int  // Number of turns between auto-checkpoints
 	lastCheckpointTurn int  // Last turn when checkpoint was saved
-	lastThoughtTurn    int  // Last turn with a thought
 }
 
 // NewAgent creates a new agent with the specified type and filtered tools.
@@ -195,8 +193,9 @@ func NewAgent(agentType AgentType, c client.Client, baseRegistry tools.ToolRegis
 		}
 	}
 
-	// Initialize self-reflection capability
+	// Initialize self-reflection capability with LLM client for semantic analysis
 	agent.reflector = NewReflector()
+	agent.reflector.SetClient(agentClient)
 
 	// Wire up scratchpad if it exists
 	if t, ok := agent.registry.Get("update_scratchpad"); ok {
@@ -292,7 +291,10 @@ func NewAgentWithDynamicType(dynType *DynamicAgentType, c client.Client, baseReg
 		}
 	}
 
+	// Initialize self-reflection capability with LLM client for semantic analysis
 	agent.reflector = NewReflector()
+	agent.reflector.SetClient(agentClient)
+
 	agent.delegation = NewDelegationStrategy(AgentTypeGeneral, nil)
 
 	return agent
@@ -634,6 +636,9 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*AgentResult, error) {
 		startTime := a.startTime
 		a.stateMu.Unlock()
 
+		// Clear callHistory to prevent memory leak
+		a.clearCallHistory()
+
 		result.Status = AgentStatusFailed
 		result.Error = err.Error()
 		result.Output = output // Preserve partial output on failure
@@ -652,6 +657,9 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*AgentResult, error) {
 	startTime := a.startTime
 	a.stateMu.Unlock()
 
+	// Clear callHistory to prevent memory leak on long-running sessions
+	a.clearCallHistory()
+
 	result.Status = AgentStatusCompleted
 	result.Output = output
 	result.Duration = endTime.Sub(startTime)
@@ -661,6 +669,13 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*AgentResult, error) {
 	a.SetProgress(a.totalSteps, a.totalSteps, "Completed")
 
 	return result, nil
+}
+
+// clearCallHistory clears the call history map to prevent memory leaks.
+func (a *Agent) clearCallHistory() {
+	a.callHistoryMu.Lock()
+	a.callHistory = make(map[string]int)
+	a.callHistoryMu.Unlock()
 }
 
 // buildSystemPrompt creates the system prompt based on agent type.
@@ -730,6 +745,73 @@ func (a *Agent) buildSystemPrompt() string {
 		sb.WriteString("This is your persistent memory. Use it to store facts, thoughts, or plans.\n\n")
 		sb.WriteString(a.Scratchpad)
 		sb.WriteString("\n═══════════════════════════════════════════════════════════════════════\n")
+	}
+
+	// Inject tool usage guides for available tools
+	sb.WriteString(a.buildToolGuidesSection())
+
+	return sb.String()
+}
+
+// buildToolGuidesSection creates a section with usage guides for available tools.
+func (a *Agent) buildToolGuidesSection() string {
+	var sb strings.Builder
+
+	toolNames := a.registry.Names()
+	if len(toolNames) == 0 {
+		return ""
+	}
+
+	// Only include guides for tools that have them
+	var guidesIncluded []string
+	for _, name := range toolNames {
+		if guide, ok := ctxmgr.GetToolGuide(name); ok {
+			guidesIncluded = append(guidesIncluded, name)
+			if len(guidesIncluded) == 1 {
+				// Header on first guide
+				sb.WriteString("\n═══════════════════════════════════════════════════════════════════════\n")
+				sb.WriteString("                     TOOL USAGE GUIDELINES\n")
+				sb.WriteString("═══════════════════════════════════════════════════════════════════════\n\n")
+			}
+
+			sb.WriteString(fmt.Sprintf("### %s\n", name))
+			sb.WriteString(fmt.Sprintf("**When to use:** %s\n\n", guide.WhenToUse))
+			sb.WriteString(fmt.Sprintf("**How to respond:** %s\n\n", guide.HowToRespond))
+			if guide.CommonMistakes != "" {
+				sb.WriteString(fmt.Sprintf("**Avoid:** %s\n\n", guide.CommonMistakes))
+			}
+		}
+	}
+
+	// Add relevant chain patterns based on agent type
+	if len(guidesIncluded) > 0 {
+		sb.WriteString("\n### Tool Chain Patterns\n")
+		switch a.Type {
+		case AgentTypeExplore:
+			if pattern, ok := ctxmgr.ToolChainPatterns["explore_code"]; ok {
+				sb.WriteString(pattern)
+				sb.WriteString("\n")
+			}
+			if pattern, ok := ctxmgr.ToolChainPatterns["find_usage"]; ok {
+				sb.WriteString(pattern)
+				sb.WriteString("\n")
+			}
+		case AgentTypeBash:
+			if pattern, ok := ctxmgr.ToolChainPatterns["debug_error"]; ok {
+				sb.WriteString(pattern)
+				sb.WriteString("\n")
+			}
+		case AgentTypeGeneral:
+			if pattern, ok := ctxmgr.ToolChainPatterns["implement_feature"]; ok {
+				sb.WriteString(pattern)
+				sb.WriteString("\n")
+			}
+		case AgentTypePlan:
+			if pattern, ok := ctxmgr.ToolChainPatterns["understand_architecture"]; ok {
+				sb.WriteString(pattern)
+				sb.WriteString("\n")
+			}
+		}
 	}
 
 	return sb.String()
@@ -1156,7 +1238,7 @@ func (a *Agent) executeLoop(ctx context.Context, prompt string, output *strings.
 						// Build replan context with reflection
 						var reflection *Reflection
 						if a.reflector != nil && firstFailure.action.ToolName != "" {
-							reflection = a.reflector.Analyze(firstFailure.action.ToolName, firstFailure.action.ToolArgs, firstFailure.result.Error)
+							reflection = a.reflector.Reflect(firstFailure.action.ToolName, firstFailure.action.ToolArgs, firstFailure.result.Error)
 						}
 
 						// Find the node in the tree for replanning
@@ -1249,8 +1331,14 @@ func (a *Agent) executeLoop(ctx context.Context, prompt string, output *strings.
 						a.safeOnText(fmt.Sprintf("\n[Loop detected: %s called %d times with same args — intervening]\n", fc.Name, count))
 					}
 
-					// Inject intervention message (protected by mutex)
-					intervention := fmt.Sprintf("Wait. I've noticed I'm calling %s with the same arguments repeatedly. I should stop and rethink my approach. Why isn't this working? What am I missing?", fc.Name)
+					// Build reflection-based intervention with strategy switching
+					intervention := a.buildLoopRecoveryIntervention(fc.Name, fc.Args, count)
+
+					// Clear this specific call from history to allow retry with different args
+					a.callHistoryMu.Lock()
+					delete(a.callHistory, key)
+					a.callHistoryMu.Unlock()
+
 					a.stateMu.Lock()
 					a.history = append(a.history, genai.NewContentFromText(intervention, genai.RoleUser))
 					// Give bounded extra turns to recover (max 3)
@@ -1310,6 +1398,71 @@ func (a *Agent) executeLoop(ctx context.Context, prompt string, output *strings.
 	}
 
 	return a.history, output.String(), nil
+}
+
+// buildLoopRecoveryIntervention creates a reflection-based intervention message for mental loop recovery.
+// This helps the agent understand what went wrong and suggests alternative approaches.
+func (a *Agent) buildLoopRecoveryIntervention(toolName string, args map[string]any, count int) string {
+	var sb strings.Builder
+
+	sb.WriteString("STOP. I've detected that I'm stuck in a loop.\n\n")
+	sb.WriteString("**What I was doing:**\n")
+	sb.WriteString(fmt.Sprintf("- Calling `%s` with the same arguments %d times\n", toolName, count))
+
+	// Extract key arguments for context
+	if args != nil {
+		if path, ok := args["path"].(string); ok {
+			sb.WriteString(fmt.Sprintf("- Path: `%s`\n", path))
+		}
+		if pattern, ok := args["pattern"].(string); ok {
+			sb.WriteString(fmt.Sprintf("- Pattern: `%s`\n", pattern))
+		}
+		if cmd, ok := args["command"].(string); ok {
+			sb.WriteString(fmt.Sprintf("- Command: `%s`\n", cmd))
+		}
+	}
+
+	sb.WriteString("\n**Why this isn't working:**\n")
+	sb.WriteString("- Repeating the same action will give the same result\n")
+	sb.WriteString("- I need to change my approach, not retry the same thing\n\n")
+
+	// Suggest alternatives based on the tool
+	sb.WriteString("**What I should try instead:**\n")
+	switch toolName {
+	case "read":
+		sb.WriteString("- Use `glob` to find the correct file path first\n")
+		sb.WriteString("- Check if the file exists with `bash ls -la <dir>`\n")
+		sb.WriteString("- Try a different file that might have the information\n")
+	case "grep":
+		sb.WriteString("- Simplify my search pattern\n")
+		sb.WriteString("- Use `glob` to confirm files exist first\n")
+		sb.WriteString("- Try different keywords or regex patterns\n")
+		sb.WriteString("- Search in a different directory\n")
+	case "glob":
+		sb.WriteString("- Try a broader pattern like `**/*`\n")
+		sb.WriteString("- Check directory existence with `bash ls`\n")
+		sb.WriteString("- Use `tree` to see the directory structure\n")
+	case "bash":
+		sb.WriteString("- Check if the command exists with `which <cmd>`\n")
+		sb.WriteString("- Try a simpler version of the command first\n")
+		sb.WriteString("- Use `read` to examine related files for clues\n")
+	case "edit":
+		sb.WriteString("- Read the file first to understand its current state\n")
+		sb.WriteString("- Check if my old_string actually exists in the file\n")
+		sb.WriteString("- Use `grep` to find the exact text I need to replace\n")
+	case "write":
+		sb.WriteString("- Read the target path first to understand what's there\n")
+		sb.WriteString("- Check directory permissions\n")
+		sb.WriteString("- Verify the parent directory exists\n")
+	default:
+		sb.WriteString("- Step back and reconsider my overall approach\n")
+		sb.WriteString("- Try gathering more context before acting\n")
+		sb.WriteString("- Use a different tool to achieve the same goal\n")
+	}
+
+	sb.WriteString("\nI will now try a DIFFERENT approach to achieve my goal.\n")
+
+	return sb.String()
 }
 
 // checkAndSummarize monitors token usage and triggers summarization if thresholds are met.
@@ -1498,6 +1651,8 @@ func (a *Agent) executeTools(ctx context.Context, calls []*genai.FunctionCall) [
 
 	// Classify tools into parallel groups
 	classifier := NewToolDependencyClassifier()
+	// Optimize call order for better parallelism (reads before writes)
+	calls = classifier.OptimizeForParallelism(calls)
 	groups := classifier.ClassifyDependencies(calls)
 
 	for _, group := range groups {
@@ -1610,7 +1765,7 @@ func (a *Agent) executeToolWithReflection(ctx context.Context, call *genai.Funct
 
 	// Apply self-reflection on errors to provide recovery suggestions
 	if !result.Success && a.reflector != nil {
-		reflection = a.reflector.Analyze(call.Name, call.Args, result.Content)
+		reflection = a.reflector.Reflect(call.Name, call.Args, result.Content)
 		if reflection.Intervention != "" {
 			// Enrich the error result with reflection analysis
 			result.Content = fmt.Sprintf("%s\n\n---\n**Self-Reflection:**\n%s",

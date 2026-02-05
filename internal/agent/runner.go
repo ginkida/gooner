@@ -58,6 +58,9 @@ type Runner struct {
 	planningModeEnabled    bool // Global planning mode flag
 	requireApprovalEnabled bool // Global require approval flag
 
+	// Phase 7: Delegation Metrics
+	delegationMetrics *DelegationMetrics
+
 	// Callback for context compaction when plan is approved
 	onPlanApproved func(planSummary string)
 
@@ -83,6 +86,9 @@ type Runner struct {
 
 	// Phase 2: Prompt optimizer
 	promptOptimizer *PromptOptimizer
+
+	// File predictor for enhanced error recovery
+	predictor PredictorInterface
 
 	// Sub-agent activity callback for UI updates
 	onSubAgentActivity func(agentID, agentType, toolName string, args map[string]any, status string)
@@ -121,6 +127,13 @@ func (r *Runner) GetErrorStore() *memory.ErrorStore {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.errorStore
+}
+
+// SetPredictor sets the file predictor for enhanced error recovery.
+func (r *Runner) SetPredictor(p PredictorInterface) {
+	r.mu.Lock()
+	r.predictor = p
+	r.mu.Unlock()
 }
 
 // SetTypeRegistry sets the agent type registry for dynamic types.
@@ -205,6 +218,20 @@ func (r *Runner) SetRequireApprovalEnabled(enabled bool) {
 	r.mu.Lock()
 	r.requireApprovalEnabled = enabled
 	r.mu.Unlock()
+}
+
+// SetDelegationMetrics sets the delegation metrics for adaptive delegation rules.
+func (r *Runner) SetDelegationMetrics(dm *DelegationMetrics) {
+	r.mu.Lock()
+	r.delegationMetrics = dm
+	r.mu.Unlock()
+}
+
+// GetDelegationMetrics returns the delegation metrics.
+func (r *Runner) GetDelegationMetrics() *DelegationMetrics {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.delegationMetrics
 }
 
 // SetOnPlanApproved sets the callback for when a plan is approved.
@@ -431,8 +458,10 @@ func (r *Runner) Spawn(ctx context.Context, agentType string, prompt string, max
 	r.mu.RLock()
 	ctxCfg := r.ctxCfg
 	errorStore := r.errorStore
+	predictor := r.predictor
 	typeRegistry := r.typeRegistry
 	strategyOpt := r.strategyOptimizer
+	delegationMetrics := r.delegationMetrics
 	metaAgent := r.metaAgent
 	treePlanner := r.treePlanner
 	planningMode := r.planningModeEnabled
@@ -472,7 +501,22 @@ func (r *Runner) Spawn(ctx context.Context, agentType string, prompt string, max
 		agent.reflector.SetErrorStore(errorStore)
 	}
 
-	// Wire tree planner	// Wire planning capabilities
+	// Wire file predictor for enhanced error recovery
+	if predictor != nil && agent.reflector != nil {
+		agent.reflector.SetPredictor(predictor)
+	}
+
+	// Wire delegation metrics for adaptive delegation rules
+	if delegationMetrics != nil && agent.delegation != nil {
+		agent.delegation.SetDelegationMetrics(delegationMetrics)
+	}
+
+	// Wire strategy optimizer to delegation strategy
+	if strategyOpt != nil && agent.delegation != nil {
+		agent.delegation.SetStrategyOptimizer(strategyOpt)
+	}
+
+	// Wire tree planner and planning capabilities
 	if treePlanner != nil {
 		agent.SetTreePlanner(treePlanner)
 		if planningMode {
@@ -548,6 +592,7 @@ func (r *Runner) SpawnWithContext(
 	r.mu.RLock()
 	ctxCfg := r.ctxCfg
 	errorStore := r.errorStore
+	predictor := r.predictor
 	onInput := r.onInput
 	r.mu.RUnlock()
 
@@ -577,6 +622,11 @@ func (r *Runner) SpawnWithContext(
 	// Wire error store for learning from errors
 	if errorStore != nil && agent.reflector != nil {
 		agent.reflector.SetErrorStore(errorStore)
+	}
+
+	// Wire file predictor for enhanced error recovery
+	if predictor != nil && agent.reflector != nil {
+		agent.reflector.SetPredictor(predictor)
 	}
 
 	// Inject project context and streaming callback
@@ -618,6 +668,7 @@ func (r *Runner) SpawnAsync(ctx context.Context, agentType string, prompt string
 	r.mu.RLock()
 	ctxCfg := r.ctxCfg
 	errorStore := r.errorStore
+	predictor := r.predictor
 	r.mu.RUnlock()
 	agent := NewAgent(at, r.client, r.baseRegistry, r.workDir, maxTurns, model, r.permissions, ctxCfg)
 
@@ -630,6 +681,11 @@ func (r *Runner) SpawnAsync(ctx context.Context, agentType string, prompt string
 	// Wire error store for learning from errors
 	if errorStore != nil && agent.reflector != nil {
 		agent.reflector.SetErrorStore(errorStore)
+	}
+
+	// Wire file predictor for enhanced error recovery
+	if predictor != nil && agent.reflector != nil {
+		agent.reflector.SetPredictor(predictor)
 	}
 
 	r.mu.Lock()
@@ -733,6 +789,7 @@ func (r *Runner) SpawnAsyncWithStreaming(
 	r.mu.RLock()
 	ctxCfg := r.ctxCfg
 	errorStore := r.errorStore
+	predictor := r.predictor
 	sharedMem := r.sharedMemory
 	exampleStore := r.exampleStore
 	promptOpt := r.promptOptimizer
@@ -754,6 +811,11 @@ func (r *Runner) SpawnAsyncWithStreaming(
 	// Wire error store for learning from errors
 	if errorStore != nil && agent.reflector != nil {
 		agent.reflector.SetErrorStore(errorStore)
+	}
+
+	// Wire file predictor for enhanced error recovery
+	if predictor != nil && agent.reflector != nil {
+		agent.reflector.SetPredictor(predictor)
 	}
 
 	// Wire shared memory if available

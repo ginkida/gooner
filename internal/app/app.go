@@ -866,8 +866,31 @@ func (a *App) executePlanDelegated(ctx context.Context, approvedPlan *plan.Plan)
 
 	totalSteps := len(approvedPlan.Steps)
 
+	// Get SharedMemory for inter-step communication
+	var sharedMem *agent.SharedMemory
+	if a.agentRunner != nil {
+		sharedMem = a.agentRunner.GetSharedMemory()
+	}
+
 	// Save context snapshot if not already present (e.g., first execution, not resume)
-	contextSnapshot := approvedPlan.GetContextSnapshot()
+	// Priority: 1) SharedMemory structured snapshot, 2) Plan string snapshot, 3) Extract new
+	contextSnapshot := ""
+
+	// First, try to get structured snapshot from SharedMemory
+	if sharedMem != nil {
+		if formattedSnapshot := sharedMem.GetContextSnapshotForPrompt(); formattedSnapshot != "" {
+			contextSnapshot = formattedSnapshot
+			logging.Debug("using structured context snapshot from shared memory",
+				"plan_id", approvedPlan.ID, "snapshot_len", len(contextSnapshot))
+		}
+	}
+
+	// Fall back to plan's string snapshot
+	if contextSnapshot == "" {
+		contextSnapshot = approvedPlan.GetContextSnapshot()
+	}
+
+	// If still empty and first execution, extract new snapshot
 	if contextSnapshot == "" && approvedPlan.CompletedCount() == 0 {
 		contextSnapshot = a.extractContextSnapshot()
 		if contextSnapshot != "" {
@@ -875,12 +898,6 @@ func (a *App) executePlanDelegated(ctx context.Context, approvedPlan *plan.Plan)
 			logging.Debug("context snapshot saved for delegated plan",
 				"plan_id", approvedPlan.ID, "snapshot_len", len(contextSnapshot))
 		}
-	}
-
-	// Get SharedMemory for inter-step communication
-	var sharedMem *agent.SharedMemory
-	if a.agentRunner != nil {
-		sharedMem = a.agentRunner.GetSharedMemory()
 	}
 
 	// Notify UI with plan banner
@@ -1209,13 +1226,22 @@ func (a *App) GetTreePlanner() *agent.TreePlanner {
 	return a.treePlanner
 }
 
+// GetAgentTypeRegistry returns the agent type registry.
+func (a *App) GetAgentTypeRegistry() *agent.AgentTypeRegistry {
+	return a.agentTypeRegistry
+}
+
 // extractContextSnapshot creates a summary of the current session context.
 // This preserves key decisions and findings from the planning conversation.
+// It also creates a structured ContextSnapshot and saves it to SharedMemory.
 func (a *App) extractContextSnapshot() string {
 	history := a.session.GetHistory()
 	if len(history) < 4 {
 		return "" // Not enough context to summarize
 	}
+
+	// Create structured snapshot for SharedMemory
+	snapshot := agent.NewContextSnapshot()
 
 	var sb strings.Builder
 	sb.WriteString("## Context from Planning Discussion\n\n")
@@ -1239,7 +1265,16 @@ func (a *App) extractContextSnapshot() string {
 		for _, part := range content.Parts {
 			if part != nil && part.Text != "" {
 				text := part.Text
-				// Truncate long messages
+
+				// Extract structured information from assistant messages
+				if content.Role == "model" {
+					a.extractSnapshotFromText(snapshot, text)
+				} else {
+					// User messages often contain requirements
+					a.extractRequirementsFromText(snapshot, text)
+				}
+
+				// Truncate long messages for string output
 				if len(text) > 500 {
 					text = text[:500] + "..."
 				}
@@ -1248,9 +1283,100 @@ func (a *App) extractContextSnapshot() string {
 				break
 			}
 		}
+
+		// Also check for function calls (tool results) to extract key files
+		for _, part := range content.Parts {
+			if part != nil && part.FunctionResponse != nil {
+				a.extractKeyFilesFromToolResult(snapshot, part.FunctionResponse)
+			}
+		}
+	}
+
+	// Save structured snapshot to SharedMemory
+	if a.agentRunner != nil {
+		if sharedMem := a.agentRunner.GetSharedMemory(); sharedMem != nil {
+			sharedMem.SaveContextSnapshot(snapshot, "planning_phase")
+			logging.Debug("structured context snapshot saved to shared memory",
+				"key_files", len(snapshot.KeyFiles),
+				"discoveries", len(snapshot.Discoveries),
+				"requirements", len(snapshot.Requirements),
+				"decisions", len(snapshot.Decisions))
+		}
 	}
 
 	return sb.String()
+}
+
+// extractSnapshotFromText extracts structured information from assistant text.
+func (a *App) extractSnapshotFromText(snapshot *agent.ContextSnapshot, text string) {
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		lower := strings.ToLower(line)
+
+		// Look for decisions (architectural patterns)
+		if strings.Contains(lower, "decided") || strings.Contains(lower, "will use") ||
+			strings.Contains(lower, "approach:") || strings.Contains(lower, "решено") ||
+			strings.Contains(lower, "использ") {
+			if len(line) > 20 && len(line) < 300 {
+				snapshot.AddDecision(line)
+			}
+		}
+
+		// Look for discoveries
+		if strings.Contains(lower, "found") || strings.Contains(lower, "discovered") ||
+			strings.Contains(lower, "noticed") || strings.Contains(lower, "обнаруж") ||
+			strings.Contains(lower, "нашёл") || strings.Contains(lower, "нашел") {
+			if len(line) > 20 && len(line) < 300 {
+				snapshot.AddDiscovery(line)
+			}
+		}
+
+		// Look for error patterns
+		if strings.Contains(lower, "error:") || strings.Contains(lower, "failed:") ||
+			strings.Contains(lower, "ошибка:") {
+			if len(line) > 10 && len(line) < 200 {
+				// Try to extract error pattern and add with empty solution for now
+				snapshot.ErrorPatterns[line] = ""
+			}
+		}
+	}
+}
+
+// extractRequirementsFromText extracts requirements from user text.
+func (a *App) extractRequirementsFromText(snapshot *agent.ContextSnapshot, text string) {
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		lower := strings.ToLower(line)
+
+		// Look for requirements/constraints
+		if strings.Contains(lower, "must") || strings.Contains(lower, "should") ||
+			strings.Contains(lower, "need") || strings.Contains(lower, "require") ||
+			strings.Contains(lower, "должен") || strings.Contains(lower, "нужно") ||
+			strings.Contains(lower, "требован") {
+			if len(line) > 15 && len(line) < 300 {
+				snapshot.AddRequirement(line)
+			}
+		}
+	}
+}
+
+// extractKeyFilesFromToolResult extracts key files from tool results.
+func (a *App) extractKeyFilesFromToolResult(snapshot *agent.ContextSnapshot, fr *genai.FunctionResponse) {
+	if fr == nil || fr.Name != "read" {
+		return
+	}
+
+	// fr.Response is map[string]any - try to extract file path
+	if fr.Response != nil {
+		if path, ok := fr.Response["file_path"].(string); ok {
+			// Add file with a placeholder summary (will be enriched later)
+			if _, exists := snapshot.KeyFiles[path]; !exists {
+				snapshot.KeyFiles[path] = "read during planning"
+			}
+		}
+	}
 }
 
 // AppInterface implementation for commands package

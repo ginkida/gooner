@@ -1,16 +1,37 @@
 package agent
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
+	"gokin/internal/client"
+	"gokin/internal/logging"
 	"gokin/internal/memory"
 )
 
+// PredictorInterface defines the interface for file prediction.
+type PredictorInterface interface {
+	PredictFiles(currentFile string, limit int) []PredictedFile
+}
+
+// PredictedFile represents a file that might be needed.
+type PredictedFile struct {
+	Path       string  `json:"path"`
+	Confidence float64 `json:"confidence"`
+	Reason     string  `json:"reason"`
+}
+
 // Reflector analyzes tool execution failures and suggests recovery strategies.
 type Reflector struct {
-	patterns   []ErrorPattern
-	errorStore *memory.ErrorStore // Persistent error learning
+	patterns               []ErrorPattern
+	errorStore             *memory.ErrorStore // Persistent error learning
+	client                 client.Client      // For LLM-based semantic analysis
+	enableSemanticAnalysis bool               // Whether to use LLM for unmatched errors
+	predictor              PredictorInterface // For file predictions on file_not_found errors
 }
 
 // ErrorPattern matches an error and provides a recommendation.
@@ -42,8 +63,19 @@ type Reflection struct {
 // NewReflector creates a new reflector with default error patterns.
 func NewReflector() *Reflector {
 	return &Reflector{
-		patterns: defaultErrorPatterns(),
+		patterns:               defaultErrorPatterns(),
+		enableSemanticAnalysis: true,
 	}
+}
+
+// SetClient sets the LLM client for semantic analysis.
+func (r *Reflector) SetClient(c client.Client) {
+	r.client = c
+}
+
+// SetSemanticAnalysis enables or disables LLM-based error analysis.
+func (r *Reflector) SetSemanticAnalysis(enabled bool) {
+	r.enableSemanticAnalysis = enabled
 }
 
 // SetErrorStore sets the persistent error store for learning.
@@ -56,10 +88,9 @@ func (r *Reflector) GetErrorStore() *memory.ErrorStore {
 	return r.errorStore
 }
 
-// Analyze examines a tool error and returns recovery recommendations.
-// Deprecated: use Reflect instead.
-func (r *Reflector) Analyze(toolName string, args map[string]any, errorMsg string) *Reflection {
-	return r.Reflect(toolName, args, errorMsg)
+// SetPredictor sets the file predictor for enhanced file_not_found recovery.
+func (r *Reflector) SetPredictor(p PredictorInterface) {
+	r.predictor = p
 }
 
 // Reflect examines a tool error and returns recovery recommendations.
@@ -98,6 +129,22 @@ func (r *Reflector) Reflect(toolName string, args map[string]any, errorMsg strin
 			// Build intervention message based on context
 			reflection.Intervention = r.buildIntervention(toolName, args, pattern, errorMsg)
 
+			// Enhance file_not_found errors with file predictions
+			if pattern.Category == "file_not_found" && r.predictor != nil {
+				if filePath := extractFilePathFromError(errorMsg, args); filePath != "" {
+					predictions := r.predictor.PredictFiles(filePath, 3)
+					if len(predictions) > 0 {
+						var suggestions []string
+						for _, p := range predictions {
+							suggestions = append(suggestions, p.Path)
+						}
+						reflection.Intervention += fmt.Sprintf(
+							"\n\n**Similar files that might be relevant:**\n- %s",
+							strings.Join(suggestions, "\n- "))
+					}
+				}
+			}
+
 			// Append learned context if available
 			if reflection.LearnedContext != "" {
 				reflection.Intervention += "\n" + reflection.LearnedContext
@@ -107,7 +154,21 @@ func (r *Reflector) Reflect(toolName string, args map[string]any, errorMsg strin
 		}
 	}
 
-	// Generic reflection for unmatched errors
+	// For unmatched errors, try semantic analysis with LLM
+	if r.enableSemanticAnalysis && r.client != nil {
+		semanticReflection := r.semanticAnalyze(toolName, args, errorMsg)
+		if semanticReflection != nil && semanticReflection.Category != "unknown" {
+			// Append learned context if available
+			if reflection.LearnedContext != "" {
+				semanticReflection.LearnedContext = reflection.LearnedContext
+				semanticReflection.LearnedEntryID = reflection.LearnedEntryID
+				semanticReflection.Intervention += "\n" + reflection.LearnedContext
+			}
+			return semanticReflection
+		}
+	}
+
+	// Fall back to generic reflection for unmatched errors
 	reflection.Category = "unknown"
 	reflection.Suggestion = "Try a different approach or break down the task"
 	reflection.Intervention = buildGenericIntervention(toolName, errorMsg)
@@ -118,6 +179,127 @@ func (r *Reflector) Reflect(toolName string, args map[string]any, errorMsg strin
 	}
 
 	return reflection
+}
+
+// SemanticAnalysisResult represents the LLM's analysis of an error.
+type SemanticAnalysisResult struct {
+	Category    string `json:"category"`
+	Suggestion  string `json:"suggestion"`
+	ShouldRetry bool   `json:"should_retry"`
+	Alternative string `json:"alternative"`
+	RootCause   string `json:"root_cause"`
+}
+
+// semanticAnalyze uses LLM to analyze errors that don't match known patterns.
+func (r *Reflector) semanticAnalyze(toolName string, args map[string]any, errorMsg string) *Reflection {
+	if r.client == nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Build analysis prompt
+	argsJSON, _ := json.Marshal(args)
+	prompt := `You are an error analysis expert. Analyze this tool execution error and provide recovery recommendations.
+
+Tool: ` + toolName + `
+Arguments: ` + string(argsJSON) + `
+Error: ` + errorMsg + `
+
+Respond with a JSON object containing:
+{
+  "category": "one of: file_not_found, permission_denied, syntax_error, compilation_error, network_error, timeout, resource_error, invalid_args, configuration_error, dependency_error, logic_error, unknown",
+  "suggestion": "specific actionable advice to fix this error",
+  "should_retry": true/false if retrying might help,
+  "alternative": "name of alternative tool or approach if applicable (e.g., 'glob', 'read', 'explore')",
+  "root_cause": "brief explanation of the likely root cause"
+}
+
+Be concise and practical. Focus on actionable solutions.`
+
+	resp, err := r.client.SendMessage(ctx, prompt)
+	if err != nil {
+		logging.Debug("semantic analysis failed", "error", err)
+		return nil
+	}
+
+	// Collect the response
+	var fullResponse strings.Builder
+	for chunk := range resp.Chunks {
+		if chunk.Error != nil {
+			logging.Debug("semantic analysis stream error", "error", chunk.Error)
+			break
+		}
+		if chunk.Text != "" {
+			fullResponse.WriteString(chunk.Text)
+		}
+	}
+
+	// Parse JSON from response
+	responseText := fullResponse.String()
+	result, err := r.parseSemanticResult(responseText)
+	if err != nil {
+		logging.Debug("failed to parse semantic analysis result", "error", err, "response", responseText)
+		return nil
+	}
+
+	// Build reflection from result
+	reflection := &Reflection{
+		ToolName:    toolName,
+		Error:       errorMsg,
+		Category:    result.Category,
+		Suggestion:  result.Suggestion,
+		ShouldRetry: result.ShouldRetry,
+		Alternative: result.Alternative,
+	}
+
+	// Build intervention message
+	var sb strings.Builder
+	sb.WriteString("**Semantic Error Analysis:**\n\n")
+	sb.WriteString("**Root Cause:** " + result.RootCause + "\n\n")
+	sb.WriteString("**Category:** " + result.Category + "\n\n")
+	sb.WriteString("**Recommendation:** " + result.Suggestion + "\n\n")
+	if result.Alternative != "" {
+		sb.WriteString("**Alternative Approach:** Try using `" + result.Alternative + "` instead.\n\n")
+	}
+	if result.ShouldRetry {
+		sb.WriteString("This error might be resolved by retrying with modifications.\n")
+	} else {
+		sb.WriteString("A different approach is recommended.\n")
+	}
+
+	reflection.Intervention = sb.String()
+
+	// Learn from this analysis for future reference
+	if r.errorStore != nil {
+		tags := []string{toolName, result.Category}
+		if result.Alternative != "" {
+			tags = append(tags, "alt:"+result.Alternative)
+		}
+		_ = r.errorStore.LearnError(result.Category, errorMsg, result.Suggestion, tags)
+	}
+
+	return reflection
+}
+
+// parseSemanticResult extracts JSON from LLM response.
+func (r *Reflector) parseSemanticResult(response string) (*SemanticAnalysisResult, error) {
+	// Find JSON in response
+	start := strings.Index(response, "{")
+	end := strings.LastIndex(response, "}")
+	if start == -1 || end == -1 || end <= start {
+		return nil, fmt.Errorf("no JSON found in response")
+	}
+
+	jsonStr := response[start : end+1]
+
+	var result SemanticAnalysisResult
+	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
 }
 
 // LearnFromError stores a new error pattern with its solution.
@@ -168,6 +350,36 @@ func (r *Reflector) buildIntervention(toolName string, args map[string]any, patt
 	}
 
 	return sb.String()
+}
+
+// extractFilePathFromError attempts to extract a file path from error message or args.
+func extractFilePathFromError(errorMsg string, args map[string]any) string {
+	// Try to get path from args first (most reliable)
+	if args != nil {
+		for _, key := range []string{"path", "file_path", "filepath", "file", "filename"} {
+			if v, ok := args[key]; ok {
+				if s, ok := v.(string); ok && s != "" {
+					return s
+				}
+			}
+		}
+	}
+
+	// Try to extract from error message using regex
+	// Match common path patterns
+	pathPatterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?:file|path|directory)\s+['"]?([^\s'"]+?)['"]?\s+(?:not found|does not exist)`),
+		regexp.MustCompile(`no such file or directory:\s*['"]?([^\s'"]+)`),
+		regexp.MustCompile(`cannot find\s+['"]?([^\s'"]+)`),
+	}
+
+	for _, re := range pathPatterns {
+		if matches := re.FindStringSubmatch(errorMsg); len(matches) > 1 {
+			return matches[1]
+		}
+	}
+
+	return ""
 }
 
 // buildGenericIntervention creates a generic reflection message.

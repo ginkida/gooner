@@ -10,13 +10,16 @@ import (
 
 // DelegationStrategy determines when and how an agent should delegate to sub-agents.
 type DelegationStrategy struct {
-	messenger         *AgentMessenger
-	agentType         AgentType
-	turnCount         int
-	stuckThreshold    int
-	lastProgress      string
-	sameProgressCount int
-	currentDepth      int // Current delegation depth
+	messenger          *AgentMessenger
+	agentType          AgentType
+	turnCount          int
+	stuckThreshold     int
+	lastProgress       string
+	sameProgressCount  int
+	currentDepth       int                 // Current delegation depth
+	strategyOpt        *StrategyOptimizer  // For historical success rate lookup
+	delegationMetrics  *DelegationMetrics  // For adaptive delegation rules
+	currentContextType string              // Current task context type for metrics
 }
 
 // DelegationDecision represents a decision to delegate work to another agent.
@@ -61,12 +64,49 @@ func NewDelegationStrategy(agentType AgentType, messenger *AgentMessenger) *Dele
 	}
 }
 
+// SetStrategyOptimizer sets the strategy optimizer for historical success rate lookup.
+func (d *DelegationStrategy) SetStrategyOptimizer(opt *StrategyOptimizer) {
+	d.strategyOpt = opt
+}
+
+// SetDelegationMetrics sets the delegation metrics for adaptive rules.
+func (d *DelegationStrategy) SetDelegationMetrics(dm *DelegationMetrics) {
+	d.delegationMetrics = dm
+}
+
+// SetContextType sets the current task context type for metrics tracking.
+func (d *DelegationStrategy) SetContextType(contextType string) {
+	d.currentContextType = contextType
+}
+
+// RecordDelegationResult records the outcome of a delegation for learning.
+func (d *DelegationStrategy) RecordDelegationResult(targetType string, success bool, duration time.Duration, errorType string) {
+	if d.delegationMetrics == nil {
+		return
+	}
+
+	contextType := d.currentContextType
+	if contextType == "" {
+		contextType = "general"
+	}
+
+	d.delegationMetrics.RecordExecution(
+		string(d.agentType),
+		targetType,
+		contextType,
+		success,
+		duration,
+		errorType,
+	)
+}
+
 // SetMessenger sets the messenger for delegation.
 func (d *DelegationStrategy) SetMessenger(m *AgentMessenger) {
 	d.messenger = m
 }
 
 // Evaluate checks if delegation should occur based on current state.
+// Uses StrategyOptimizer to prefer agents with higher historical success rates.
 func (d *DelegationStrategy) Evaluate(ctx *DelegationContext) *DelegationDecision {
 	// Check delegation depth limit to prevent infinite recursion
 	if ctx.DelegationDepth >= MaxDelegationDepth {
@@ -76,7 +116,8 @@ func (d *DelegationStrategy) Evaluate(ctx *DelegationContext) *DelegationDecisio
 		return &DelegationDecision{ShouldDelegate: false}
 	}
 
-	// Apply rules in priority order
+	// Collect all matching rules
+	var matchingDecisions []*DelegationDecision
 	for _, rule := range defaultDelegationRules() {
 		// Check if rule applies to this agent type
 		if rule.FromType != "" && rule.FromType != ctx.AgentType {
@@ -85,16 +126,120 @@ func (d *DelegationStrategy) Evaluate(ctx *DelegationContext) *DelegationDecisio
 
 		// Check condition
 		if rule.Condition(ctx) {
-			return &DelegationDecision{
+			matchingDecisions = append(matchingDecisions, &DelegationDecision{
 				ShouldDelegate: true,
 				TargetType:     rule.TargetType,
 				Reason:         rule.Reason,
 				Query:          rule.BuildQuery(ctx),
-			}
+			})
 		}
 	}
 
-	return &DelegationDecision{ShouldDelegate: false}
+	if len(matchingDecisions) == 0 {
+		return &DelegationDecision{ShouldDelegate: false}
+	}
+
+	// If only one match, return it
+	if len(matchingDecisions) == 1 {
+		return matchingDecisions[0]
+	}
+
+	// Multiple matches - use StrategyOptimizer to pick the best one
+	if d.strategyOpt != nil {
+		return d.selectBestDelegation(matchingDecisions)
+	}
+
+	// Fall back to first match
+	return matchingDecisions[0]
+}
+
+// selectBestDelegation chooses the delegation target with the highest historical success rate.
+// Uses both StrategyOptimizer and DelegationMetrics for comprehensive scoring.
+func (d *DelegationStrategy) selectBestDelegation(decisions []*DelegationDecision) *DelegationDecision {
+	if len(decisions) == 0 {
+		return &DelegationDecision{ShouldDelegate: false}
+	}
+
+	bestDecision := decisions[0]
+	bestScore := d.calculateDelegationScore(bestDecision.TargetType)
+
+	for _, decision := range decisions[1:] {
+		score := d.calculateDelegationScore(decision.TargetType)
+		if score > bestScore {
+			bestScore = score
+			bestDecision = decision
+		}
+	}
+
+	logging.Debug("selected delegation target by combined score",
+		"target", bestDecision.TargetType,
+		"score", bestScore)
+
+	return bestDecision
+}
+
+// calculateDelegationScore calculates a combined score for a delegation target.
+func (d *DelegationStrategy) calculateDelegationScore(targetType string) float64 {
+	baseRate := d.getAgentSuccessRate(targetType)
+
+	// If we have delegation metrics, enhance the score
+	if d.delegationMetrics != nil {
+		contextType := d.currentContextType
+		if contextType == "" {
+			contextType = "general"
+		}
+
+		// Get historical success rate from delegation metrics
+		historicalRate := d.delegationMetrics.GetSuccessRate(
+			string(d.agentType),
+			targetType,
+			contextType,
+		)
+
+		// Get rule weight
+		weight := d.delegationMetrics.GetRuleWeight(
+			string(d.agentType),
+			targetType,
+			contextType,
+		)
+
+		// Get trend
+		trend := d.delegationMetrics.GetRecentTrend(
+			string(d.agentType),
+			targetType,
+			contextType,
+		)
+
+		// Combined score: weighted average of base rate and historical rate, plus trend bonus
+		combinedRate := (baseRate*0.4 + historicalRate*0.6) * weight
+		trendBonus := trend * 0.1
+
+		return combinedRate + trendBonus
+	}
+
+	return baseRate
+}
+
+// getAgentSuccessRate returns the historical success rate for an agent type.
+func (d *DelegationStrategy) getAgentSuccessRate(agentType string) float64 {
+	if d.strategyOpt == nil {
+		return 0.5 // Default neutral
+	}
+
+	// Look up by delegation strategy key
+	key := "delegate:" + agentType
+	rate := d.strategyOpt.GetSuccessRate(key)
+	if rate > 0 && rate < 1 {
+		return rate
+	}
+
+	// Also try agent type directly
+	rate = d.strategyOpt.GetSuccessRate(agentType)
+	if rate > 0 && rate < 1 {
+		return rate
+	}
+
+	return 0.5 // Default neutral
 }
 
 // TrackProgress tracks progress to detect stuck agents.

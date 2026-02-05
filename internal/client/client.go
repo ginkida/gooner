@@ -17,7 +17,7 @@ type ModelInfo struct {
 
 // AvailableModels is the list of supported models across all providers.
 var AvailableModels = []ModelInfo{
-	// Gemini models
+	// Gemini models (API key)
 	{
 		ID:          "gemini-3-flash-preview",
 		Name:        "Gemini 3 Flash",
@@ -28,6 +28,19 @@ var AvailableModels = []ModelInfo{
 		ID:          "gemini-3-pro-preview",
 		Name:        "Gemini 3 Pro",
 		Description: "Most capable: $2/$12 per 1M tokens",
+		Provider:    "gemini",
+	},
+	// Gemini models (OAuth / Code Assist API)
+	{
+		ID:          "gemini-2.5-flash",
+		Name:        "Gemini 2.5 Flash",
+		Description: "Fast model (Code Assist)",
+		Provider:    "gemini",
+	},
+	{
+		ID:          "gemini-2.5-pro",
+		Name:        "Gemini 2.5 Pro",
+		Description: "Advanced model (Code Assist)",
 		Provider:    "gemini",
 	},
 	// GLM model (via Anthropic-compatible API)

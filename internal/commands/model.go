@@ -14,9 +14,11 @@ type ModelCommand struct{}
 func (c *ModelCommand) Name() string        { return "model" }
 func (c *ModelCommand) Description() string { return "Switch AI model" }
 func (c *ModelCommand) Usage() string {
-	return `/model         - Show current model and available models
-/model flash   - Switch to flash model
-/model pro     - Switch to pro model`
+	return `/model           - Show current model and available models
+/model 3-flash   - Switch to Gemini 3 Flash
+/model 3-pro     - Switch to Gemini 3 Pro
+/model 2.5-flash - Switch to Gemini 2.5 Flash
+/model 2.5-pro   - Switch to Gemini 2.5 Pro`
 }
 func (c *ModelCommand) GetMetadata() CommandMetadata {
 	return CommandMetadata{
@@ -67,7 +69,7 @@ func (c *ModelCommand) Execute(ctx context.Context, args []string, app AppInterf
 
 		sb.WriteString("\nUsage: /model <name>")
 		if activeProvider == "gemini" {
-			sb.WriteString("\nExamples: /model flash  or  /model pro")
+			sb.WriteString("\nExamples: /model 3-flash  or  /model 2.5-pro")
 		}
 		sb.WriteString("\n\nUse /provider to switch providers")
 
@@ -138,7 +140,27 @@ func extractShortName(modelID string) string {
 		return modelID // Return full ID for GLM (e.g., "glm-4.7")
 	}
 
-	// Gemini models
+	// Gemini 3 models
+	if strings.Contains(modelID, "gemini-3") {
+		if strings.Contains(modelID, "flash") {
+			return "3-flash"
+		}
+		if strings.Contains(modelID, "pro") {
+			return "3-pro"
+		}
+	}
+
+	// Gemini 2.5 models
+	if strings.Contains(modelID, "gemini-2.5") {
+		if strings.Contains(modelID, "flash") {
+			return "2.5-flash"
+		}
+		if strings.Contains(modelID, "pro") {
+			return "2.5-pro"
+		}
+	}
+
+	// Generic fallback
 	if strings.Contains(modelID, "flash") {
 		return "flash"
 	}

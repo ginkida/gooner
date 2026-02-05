@@ -167,6 +167,12 @@ func (r *ChunkedReader) Close() error {
 	return nil
 }
 
+// ContextPredictorInterface defines the interface for context predictors.
+type ContextPredictorInterface interface {
+	RecordAccess(path, accessType, fromFile string)
+	LearnImports(filePath string)
+}
+
 // ReadTool reads files and returns their contents with line numbers.
 type ReadTool struct {
 	notebookReader *readers.NotebookReader
@@ -174,6 +180,8 @@ type ReadTool struct {
 	pdfReader      *readers.PDFReader
 	workDir        string
 	pathValidator  *security.PathValidator
+	predictor      ContextPredictorInterface
+	lastReadFile   string // Track last file read for co-access learning
 }
 
 // NewReadTool creates a new ReadTool instance with the given working directory.
@@ -201,6 +209,11 @@ func (t *ReadTool) SetWorkDir(workDir string) {
 func (t *ReadTool) SetAllowedDirs(dirs []string) {
 	allDirs := append([]string{t.workDir}, dirs...)
 	t.pathValidator = security.NewPathValidator(allDirs, false)
+}
+
+// SetPredictor sets the context predictor for access pattern learning.
+func (t *ReadTool) SetPredictor(p ContextPredictorInterface) {
+	t.predictor = p
 }
 
 func (t *ReadTool) Name() string {
@@ -496,6 +509,13 @@ func (t *ReadTool) readText(ctx context.Context, filePath string, args map[strin
 		} else {
 			content = "(empty file)"
 		}
+	}
+
+	// Record access pattern for predictive loading
+	if t.predictor != nil {
+		t.predictor.RecordAccess(filePath, "read", t.lastReadFile)
+		t.predictor.LearnImports(filePath)
+		t.lastReadFile = filePath
 	}
 
 	return NewSuccessResult(content), nil

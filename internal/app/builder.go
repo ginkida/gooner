@@ -83,6 +83,9 @@ type Builder struct {
 	// Phase 6: Tree Planner
 	treePlanner *agent.TreePlanner
 
+	// Phase 7: Delegation Metrics (adaptive delegation rules)
+	delegationMetrics *agent.DelegationMetrics
+
 	// Phase 2: Learning infrastructure
 	sharedMemory    *agent.SharedMemory
 	exampleStore    *memory.ExampleStore
@@ -95,6 +98,9 @@ type Builder struct {
 	// MCP (Model Context Protocol)
 	mcpManager   *mcp.Manager
 	contextAgent *appcontext.ContextAgent
+
+	// Context Predictor (predictive file loading)
+	contextPredictor *appcontext.ContextPredictor
 
 	// For error collection during build
 	buildErrors []error
@@ -359,6 +365,10 @@ func (b *Builder) initSession() error {
 	b.contextManager = appcontext.NewContextManager(b.session, b.geminiClient, &b.cfg.Context)
 	b.contextAgent = appcontext.NewContextAgent(b.contextManager, b.session, b.configDir)
 
+	// Initialize context predictor for predictive file loading
+	b.contextPredictor = appcontext.NewContextPredictor(b.workDir)
+	logging.Debug("context predictor initialized")
+
 	// Start session watcher for auto-updating token counts
 	b.contextManager.StartSessionWatcher()
 
@@ -490,6 +500,11 @@ func (b *Builder) initManagers() error {
 		b.strategyOptimizer = agent.NewStrategyOptimizer(b.configDir)
 		b.agentRunner.SetStrategyOptimizer(b.strategyOptimizer)
 		logging.Debug("strategy optimizer initialized")
+
+		// 2b. Delegation Metrics (adaptive delegation rules)
+		b.delegationMetrics = agent.NewDelegationMetrics(b.configDir)
+		b.agentRunner.SetDelegationMetrics(b.delegationMetrics)
+		logging.Debug("delegation metrics initialized")
 	}
 
 	// 3. Coordinator for task orchestration
@@ -520,6 +535,19 @@ func (b *Builder) initManagers() error {
 		treePlannerConfig.PlanningTimeout = b.cfg.Plan.PlanningTimeout
 	}
 	treePlannerConfig.UseLLMExpansion = b.cfg.Plan.UseLLMExpansion
+
+	// Apply algorithm from config
+	if b.cfg.Plan.Algorithm != "" {
+		algo := agent.SearchAlgorithm(b.cfg.Plan.Algorithm)
+		switch algo {
+		case agent.SearchAlgorithmBeam, agent.SearchAlgorithmMCTS, agent.SearchAlgorithmAStar:
+			treePlannerConfig.Algorithm = algo
+		default:
+			logging.Warn("unknown tree search algorithm, using beam",
+				"algorithm", b.cfg.Plan.Algorithm)
+		}
+	}
+
 	b.treePlanner = agent.NewTreePlanner(
 		treePlannerConfig,
 		b.strategyOptimizer,
@@ -608,6 +636,10 @@ func (b *Builder) initIntegrations() error {
 	if readTool, ok := b.registry.Get("read"); ok {
 		if rt, ok := readTool.(*tools.ReadTool); ok {
 			rt.SetWorkDir(b.workDir)
+			// Wire context predictor for predictive file loading
+			if b.contextPredictor != nil {
+				rt.SetPredictor(b.contextPredictor)
+			}
 		}
 	}
 	if editTool, ok := b.registry.Get("edit"); ok {
@@ -790,6 +822,12 @@ func (b *Builder) initIntegrations() error {
 		}
 	}
 
+	// Wire context predictor to agent runner for enhanced error recovery
+	if b.contextPredictor != nil {
+		b.agentRunner.SetPredictor(&contextPredictorAdapter{predictor: b.contextPredictor})
+		logging.Debug("context predictor wired to agent runner")
+	}
+
 	// Initialize search cache
 	if b.cfg.Cache.Enabled {
 		b.searchCache = cache.NewSearchCache(b.cfg.Cache.Capacity, b.cfg.Cache.TTL)
@@ -801,6 +839,20 @@ func (b *Builder) initIntegrations() error {
 		if globTool, ok := b.registry.Get("glob"); ok {
 			if gt, ok := globTool.(*tools.GlobTool); ok {
 				gt.SetCache(b.searchCache)
+			}
+		}
+	}
+
+	// Wire context predictor to search tools for predictive file loading
+	if b.contextPredictor != nil {
+		if grepTool, ok := b.registry.Get("grep"); ok {
+			if gt, ok := grepTool.(*tools.GrepTool); ok {
+				gt.SetPredictor(b.contextPredictor)
+			}
+		}
+		if globTool, ok := b.registry.Get("glob"); ok {
+			if gt, ok := globTool.(*tools.GlobTool); ok {
+				gt.SetPredictor(b.contextPredictor)
 			}
 		}
 	}
@@ -1106,8 +1158,8 @@ func (b *Builder) wireDependencies() error {
 	b.tuiModel.SetPlanningModeToggleCallback(app.TogglePlanningModeAsync)
 
 	// Set up command palette integration
-	hasAPIKey := b.cfg.API.APIKey != "" || b.cfg.API.GeminiKey != "" || b.cfg.API.GLMKey != ""
-	paletteCtx := commands.NewPaletteContext(b.workDir, hasAPIKey)
+	hasAuth := b.cfg.API.APIKey != "" || b.cfg.API.GeminiKey != "" || b.cfg.API.GLMKey != "" || b.cfg.API.HasOAuthToken("gemini")
+	paletteCtx := commands.NewPaletteContext(b.workDir, hasAuth)
 	paletteProvider := commands.NewPaletteProvider(b.commandHandler, paletteCtx)
 	b.tuiModel.SetPaletteProvider(paletteProvider)
 
@@ -1481,4 +1533,24 @@ func (a *sharedMemoryToolAdapter) Delete(key string) bool {
 
 func (a *sharedMemoryToolAdapter) GetForContext(agentID string, maxEntries int) string {
 	return a.memory.GetForContext(agentID, maxEntries)
+}
+
+// ========== Context Predictor Adapter ==========
+
+// contextPredictorAdapter adapts appcontext.ContextPredictor to agent.PredictorInterface.
+type contextPredictorAdapter struct {
+	predictor *appcontext.ContextPredictor
+}
+
+func (a *contextPredictorAdapter) PredictFiles(currentFile string, limit int) []agent.PredictedFile {
+	predictions := a.predictor.PredictFiles(currentFile, limit)
+	result := make([]agent.PredictedFile, len(predictions))
+	for i, p := range predictions {
+		result[i] = agent.PredictedFile{
+			Path:       p.Path,
+			Confidence: p.Confidence,
+			Reason:     p.Reason,
+		}
+	}
+	return result
 }

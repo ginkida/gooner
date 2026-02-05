@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -178,6 +179,7 @@ func (tp *TreePlanner) BuildTree(ctx context.Context, prompt string, goal *PlanG
 
 // generateActions generates candidate actions for a prompt.
 // Uses pattern matching for common task types, with LLM fallback for complex tasks.
+// Leverages StrategyOptimizer to prefer historically successful strategies.
 func (tp *TreePlanner) generateActions(ctx context.Context, prompt string, goal *PlanGoal) ([]*PlannedAction, error) {
 	actions := []*PlannedAction{}
 
@@ -185,10 +187,32 @@ func (tp *TreePlanner) generateActions(ctx context.Context, prompt string, goal 
 	if tp.client != nil {
 		llmActions, err := tp.generateActionsWithLLM(ctx, prompt, goal)
 		if err == nil && len(llmActions) > 0 {
+			// Reorder actions based on historical success rates
+			llmActions = tp.reorderByHistoricalSuccess(llmActions)
 			return llmActions, nil
 		}
 		// Fall back to pattern matching on error
 		logging.Debug("LLM action generation failed, using pattern matching", "error", err)
+	}
+
+	// Check if StrategyOptimizer has a recommendation for this task type
+	if tp.strategyOpt != nil {
+		taskType := tp.classifyTaskType(prompt)
+		if taskType != "" {
+			recommendedStrategy := tp.strategyOpt.RecommendStrategy(taskType)
+			if recommendedStrategy != "" && recommendedStrategy != "general" {
+				// Strategy optimizer has a recommendation - use it as the primary action
+				logging.Debug("strategy optimizer recommendation",
+					"task_type", taskType,
+					"recommended", recommendedStrategy)
+
+				// Add the recommended strategy action first
+				recommendedAction := tp.buildActionFromStrategy(recommendedStrategy, prompt)
+				if recommendedAction != nil {
+					actions = append(actions, recommendedAction)
+				}
+			}
+		}
 	}
 
 	// Pattern-based generation (fallback)
@@ -363,7 +387,7 @@ func (tp *TreePlanner) generateRecoveryActions(failedNode *PlanNode) []*PlannedA
 
 	// If we have reflection data, use it
 	if tp.reflector != nil && failedNode.Error != "" {
-		reflection := tp.reflector.Analyze(
+		reflection := tp.reflector.Reflect(
 			failedNode.Action.ToolName,
 			failedNode.Action.ToolArgs,
 			failedNode.Error,
@@ -507,13 +531,8 @@ func (tp *TreePlanner) GetNextAction(tree *PlanTree) (*PlannedAction, error) {
 	// No ready nodes in best path, check all ready nodes
 	readyNodes := tree.GetReadyNodes()
 	if len(readyNodes) > 0 {
-		// Pick the highest scored ready node
-		var bestNode *PlanNode
-		for _, node := range readyNodes {
-			if bestNode == nil || node.Score > bestNode.Score {
-				bestNode = node
-			}
-		}
+		// Select node based on configured algorithm
+		bestNode := tp.selectNodeByAlgorithm(readyNodes, tree)
 
 		bestNode.Status = PlanNodeExecuting
 		bestNode.UpdatedAt = time.Now()
@@ -527,6 +546,97 @@ func (tp *TreePlanner) GetNextAction(tree *PlanTree) (*PlannedAction, error) {
 	}
 
 	return nil, fmt.Errorf("no ready actions in plan")
+}
+
+// selectNodeByAlgorithm selects the best node based on the configured algorithm.
+func (tp *TreePlanner) selectNodeByAlgorithm(nodes []*PlanNode, tree *PlanTree) *PlanNode {
+	if len(nodes) == 0 {
+		return nil
+	}
+	if len(nodes) == 1 {
+		return nodes[0]
+	}
+
+	switch tp.config.Algorithm {
+	case SearchAlgorithmMCTS:
+		return tp.selectNodeMCTS(nodes, tree)
+	case SearchAlgorithmAStar:
+		return tp.selectNodeAStar(nodes, tree)
+	case SearchAlgorithmBeam:
+		fallthrough
+	default:
+		return tp.selectNodeBeam(nodes)
+	}
+}
+
+// selectNodeBeam selects the highest-scored node (beam search style).
+func (tp *TreePlanner) selectNodeBeam(nodes []*PlanNode) *PlanNode {
+	var bestNode *PlanNode
+	for _, node := range nodes {
+		if bestNode == nil || node.Score > bestNode.Score {
+			bestNode = node
+		}
+	}
+	return bestNode
+}
+
+// selectNodeMCTS selects a node using UCB1 formula (exploration vs exploitation).
+func (tp *TreePlanner) selectNodeMCTS(nodes []*PlanNode, tree *PlanTree) *PlanNode {
+	// Calculate total visits for parent context
+	totalVisits := 0
+	for _, node := range nodes {
+		totalVisits += node.VisitCount + 1 // +1 to avoid division by zero
+	}
+
+	var bestNode *PlanNode
+	bestUCB := -1.0
+
+	for _, node := range nodes {
+		// UCB1 = exploitation + exploration
+		// exploitation = average reward
+		// exploration = C * sqrt(ln(total) / visits)
+		visits := float64(node.VisitCount + 1)
+		exploitation := 0.0
+		if node.VisitCount > 0 {
+			exploitation = node.TotalReward / float64(node.VisitCount)
+		} else {
+			exploitation = node.Score // Use initial score for unvisited nodes
+		}
+
+		exploration := tp.config.ExplorationC * math.Sqrt(math.Log(float64(totalVisits))/visits)
+		ucb := exploitation + exploration
+
+		if ucb > bestUCB {
+			bestUCB = ucb
+			bestNode = node
+		}
+	}
+
+	return bestNode
+}
+
+// selectNodeAStar selects a node using A* heuristic (f = g + h).
+func (tp *TreePlanner) selectNodeAStar(nodes []*PlanNode, tree *PlanTree) *PlanNode {
+	var bestNode *PlanNode
+	bestF := -1.0
+
+	for _, node := range nodes {
+		// g = cost so far (depth in tree, normalized)
+		g := 1.0 - (float64(node.Depth) / float64(tp.config.MaxTreeDepth))
+
+		// h = heuristic estimate (use score as estimate of remaining value)
+		h := node.Score
+
+		// f = g + h (we want to maximize, so higher is better)
+		f := g*tp.config.CostWeight + h*tp.config.SuccessProbWeight
+
+		if f > bestF {
+			bestF = f
+			bestNode = node
+		}
+	}
+
+	return bestNode
 }
 
 // GetReadyActions returns all currently ready independent actions.
@@ -864,6 +974,115 @@ func (tp *TreePlanner) GetStats() map[string]any {
 		"total_replans": totalReplans,
 		"algorithm":     tp.config.Algorithm,
 	}
+}
+
+// reorderByHistoricalSuccess reorders actions based on historical success rates from StrategyOptimizer.
+func (tp *TreePlanner) reorderByHistoricalSuccess(actions []*PlannedAction) []*PlannedAction {
+	if tp.strategyOpt == nil || len(actions) == 0 {
+		return actions
+	}
+
+	// Create a scored list
+	type scoredAction struct {
+		action *PlannedAction
+		score  float64
+	}
+
+	scored := make([]scoredAction, len(actions))
+	for i, action := range actions {
+		key := buildStrategyKey(action)
+		rate := tp.strategyOpt.GetSuccessRate(key)
+		// Default score of 0.5 for unknown strategies
+		if rate <= 0 || rate >= 1 {
+			rate = 0.5
+		}
+		scored[i] = scoredAction{action: action, score: rate}
+	}
+
+	// Simple bubble sort by score (descending)
+	for i := 0; i < len(scored)-1; i++ {
+		for j := i + 1; j < len(scored); j++ {
+			if scored[j].score > scored[i].score {
+				scored[i], scored[j] = scored[j], scored[i]
+			}
+		}
+	}
+
+	// Extract reordered actions
+	result := make([]*PlannedAction, len(actions))
+	for i, sa := range scored {
+		result[i] = sa.action
+	}
+
+	return result
+}
+
+// classifyTaskType determines the task type from a prompt for strategy lookup.
+func (tp *TreePlanner) classifyTaskType(prompt string) string {
+	promptLower := strings.ToLower(prompt)
+
+	if containsAny(promptLower, []string{"implement", "create", "add", "build", "write", "реализ", "созда", "добав"}) {
+		return "implementation"
+	}
+	if containsAny(promptLower, []string{"fix", "bug", "error", "debug", "исправ", "баг", "ошибк"}) {
+		return "bugfix"
+	}
+	if containsAny(promptLower, []string{"refactor", "clean", "improve", "optimize", "рефактор", "улучш", "оптимиз"}) {
+		return "refactoring"
+	}
+	if containsAny(promptLower, []string{"test", "тест"}) {
+		return "testing"
+	}
+	if containsAny(promptLower, []string{"explain", "what", "how", "why", "where", "объясн", "что", "как", "почему", "где"}) {
+		return "exploration"
+	}
+	if containsAny(promptLower, []string{"document", "doc", "readme", "документ"}) {
+		return "documentation"
+	}
+
+	return ""
+}
+
+// buildActionFromStrategy creates a PlannedAction from a strategy name.
+func (tp *TreePlanner) buildActionFromStrategy(strategy string, prompt string) *PlannedAction {
+	switch {
+	case strings.HasPrefix(strategy, "delegate:"):
+		agentType := AgentType(strings.TrimPrefix(strategy, "delegate:"))
+		return &PlannedAction{
+			Type:      ActionDelegate,
+			AgentType: agentType,
+			Prompt:    prompt,
+		}
+	case strings.HasPrefix(strategy, "tool:"):
+		toolName := strings.TrimPrefix(strategy, "tool:")
+		return &PlannedAction{
+			Type:     ActionToolCall,
+			ToolName: toolName,
+			Prompt:   prompt,
+		}
+	case strategy == "decompose":
+		return &PlannedAction{
+			Type:   ActionDecompose,
+			Prompt: prompt,
+		}
+	case strategy == "verify":
+		return &PlannedAction{
+			Type:   ActionVerify,
+			Prompt: prompt,
+		}
+	default:
+		// Try to match as agent type
+		switch AgentType(strategy) {
+		case AgentTypeExplore, AgentTypeBash, AgentTypeGeneral, AgentTypePlan, AgentTypeGuide:
+			return &PlannedAction{
+				Type:      ActionDelegate,
+				AgentType: AgentType(strategy),
+				Prompt:    prompt,
+			}
+		}
+	}
+
+	return nil
 }
 
 // containsAny checks if the string contains any of the substrings.

@@ -20,12 +20,18 @@ import (
 	"gokin/internal/security"
 )
 
+// GrepPredictorInterface defines the interface for context predictors used by grep.
+type GrepPredictorInterface interface {
+	RecordAccess(path, accessType, fromFile string)
+}
+
 // GrepTool searches for patterns in files.
 type GrepTool struct {
 	workDir       string
 	gitIgnore     *git.GitIgnore
 	cache         *cache.SearchCache
 	pathValidator *security.PathValidator
+	predictor     GrepPredictorInterface
 }
 
 // NewGrepTool creates a new GrepTool instance.
@@ -54,6 +60,11 @@ func (t *GrepTool) SetCache(c *cache.SearchCache) {
 func (t *GrepTool) SetAllowedDirs(dirs []string) {
 	allDirs := append([]string{t.workDir}, dirs...)
 	t.pathValidator = security.NewPathValidator(allDirs, false)
+}
+
+// SetPredictor sets the context predictor for access pattern learning.
+func (t *GrepTool) SetPredictor(p GrepPredictorInterface) {
+	t.predictor = p
 }
 
 func (t *GrepTool) Name() string {
@@ -238,6 +249,11 @@ func (t *GrepTool) Execute(ctx context.Context, args map[string]any) (ToolResult
 		relPath, _ := filepath.Rel(t.workDir, fm.path)
 		if relPath == "" {
 			relPath = fm.path
+		}
+
+		// Record access pattern for predictive loading
+		if t.predictor != nil {
+			t.predictor.RecordAccess(fm.path, "grep", "")
 		}
 
 		for _, match := range fm.matches {

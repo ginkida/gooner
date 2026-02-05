@@ -41,6 +41,9 @@ type APIConfig struct {
 	DeepSeekKey string `yaml:"deepseek_key,omitempty"`
 	OllamaKey   string `yaml:"ollama_key,omitempty"` // Optional, for remote Ollama servers with auth
 
+	// OAuth tokens for Gemini (via Google Account)
+	GeminiOAuth *OAuthTokenConfig `yaml:"gemini_oauth,omitempty"`
+
 	// Ollama server URL (default: http://localhost:11434)
 	OllamaBaseURL string `yaml:"ollama_base_url,omitempty"`
 
@@ -52,6 +55,24 @@ type APIConfig struct {
 
 	// Retry configuration for API calls
 	Retry RetryConfig `yaml:"retry"`
+}
+
+// OAuthTokenConfig stores OAuth tokens in config
+type OAuthTokenConfig struct {
+	AccessToken  string `yaml:"access_token"`
+	RefreshToken string `yaml:"refresh_token"`
+	ExpiresAt    int64  `yaml:"expires_at"` // Unix timestamp
+	Email        string `yaml:"email,omitempty"`
+	ProjectID    string `yaml:"project_id,omitempty"` // Code Assist project ID
+}
+
+// HasOAuthToken checks if OAuth is configured for a provider
+func (c *APIConfig) HasOAuthToken(provider string) bool {
+	switch provider {
+	case "gemini":
+		return c.GeminiOAuth != nil && c.GeminiOAuth.RefreshToken != ""
+	}
+	return false
 }
 
 // GetActiveKey returns the API key for the active provider.
@@ -205,6 +226,7 @@ type PlanConfig struct {
 	AbortOnStepFailure bool          `yaml:"abort_on_step_failure"` // Stop plan on step failure
 	PlanningTimeout    time.Duration `yaml:"planning_timeout"`      // Timeout for LLM plan generation
 	UseLLMExpansion    bool          `yaml:"use_llm_expansion"`     // Use LLM for dynamic plan expansion
+	Algorithm          string        `yaml:"algorithm"`             // Tree search algorithm: beam, mcts, astar
 }
 
 // HooksConfig holds hooks system settings.
@@ -426,6 +448,7 @@ func DefaultConfig() *Config {
 			AbortOnStepFailure: false, // Continue by default on step failure
 			PlanningTimeout:    60 * time.Second,
 			UseLLMExpansion:    true,
+			Algorithm:          "beam", // Tree search algorithm: beam, mcts, astar
 		},
 		Hooks: HooksConfig{
 			Enabled: false, // Disabled by default

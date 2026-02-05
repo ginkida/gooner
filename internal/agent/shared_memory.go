@@ -14,14 +14,50 @@ import (
 type SharedEntryType string
 
 const (
-	SharedEntryTypeFact      SharedEntryType = "fact"
-	SharedEntryTypeInsight   SharedEntryType = "insight"
-	SharedEntryTypeFileState SharedEntryType = "file_state"
-	SharedEntryTypeDecision  SharedEntryType = "decision"
+	SharedEntryTypeFact           SharedEntryType = "fact"
+	SharedEntryTypeInsight        SharedEntryType = "insight"
+	SharedEntryTypeFileState      SharedEntryType = "file_state"
+	SharedEntryTypeDecision       SharedEntryType = "decision"
+	SharedEntryTypeContextSnapshot SharedEntryType = "context_snapshot"
 
 	// MaxSharedEntries is the maximum number of entries to keep in shared memory
 	MaxSharedEntries = 500
 )
+
+// ContextSnapshot captures key information for plan→execute transitions.
+// This preserves critical context that would otherwise be lost during context compaction.
+type ContextSnapshot struct {
+	// Key files that were read and their important sections
+	KeyFiles map[string]string `json:"key_files"`
+
+	// Important discoveries from exploration phase
+	Discoveries []string `json:"discoveries"`
+
+	// Error patterns encountered and their solutions
+	ErrorPatterns map[string]string `json:"error_patterns"`
+
+	// Tool results that should be preserved (not compacted)
+	CriticalResults []CriticalResult `json:"critical_results"`
+
+	// User requirements and constraints
+	Requirements []string `json:"requirements"`
+
+	// Architectural decisions made
+	Decisions []string `json:"decisions"`
+
+	// Created at timestamp
+	CreatedAt time.Time `json:"created_at"`
+
+	// Source agent/phase
+	Source string `json:"source"`
+}
+
+// CriticalResult represents a tool result that should be preserved.
+type CriticalResult struct {
+	ToolName string `json:"tool_name"`
+	Summary  string `json:"summary"`
+	Details  string `json:"details"`
+}
 
 // SharedEntry represents an entry in shared memory.
 type SharedEntry struct {
@@ -411,4 +447,156 @@ func (sm *SharedMemory) Clear() {
 
 	sm.entries = make(map[string]*SharedEntry)
 	sm.byType = make(map[SharedEntryType][]string)
+}
+
+// SaveContextSnapshot saves a context snapshot for plan→execute transition.
+func (sm *SharedMemory) SaveContextSnapshot(snapshot *ContextSnapshot, sourceAgent string) {
+	if snapshot == nil {
+		return
+	}
+	snapshot.CreatedAt = time.Now()
+	snapshot.Source = sourceAgent
+
+	sm.Write("context_snapshot", snapshot, SharedEntryTypeContextSnapshot, sourceAgent)
+	logging.Debug("saved context snapshot",
+		"source", sourceAgent,
+		"key_files", len(snapshot.KeyFiles),
+		"discoveries", len(snapshot.Discoveries),
+		"requirements", len(snapshot.Requirements))
+}
+
+// GetContextSnapshot retrieves the latest context snapshot.
+func (sm *SharedMemory) GetContextSnapshot() *ContextSnapshot {
+	entry, ok := sm.Read("context_snapshot")
+	if !ok {
+		return nil
+	}
+
+	snapshot, ok := entry.Value.(*ContextSnapshot)
+	if !ok {
+		return nil
+	}
+
+	return snapshot
+}
+
+// GetContextSnapshotForPrompt returns a formatted context snapshot for injection into prompts.
+func (sm *SharedMemory) GetContextSnapshotForPrompt() string {
+	snapshot := sm.GetContextSnapshot()
+	if snapshot == nil {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("\n═══════════════════════════════════════════════════════════════════════\n")
+	sb.WriteString("                    CONTEXT FROM PLANNING PHASE\n")
+	sb.WriteString("═══════════════════════════════════════════════════════════════════════\n\n")
+
+	// Key files
+	if len(snapshot.KeyFiles) > 0 {
+		sb.WriteString("**Key Files Analyzed:**\n")
+		for path, summary := range snapshot.KeyFiles {
+			sb.WriteString(fmt.Sprintf("- `%s`: %s\n", path, summary))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Discoveries
+	if len(snapshot.Discoveries) > 0 {
+		sb.WriteString("**Key Discoveries:**\n")
+		for _, discovery := range snapshot.Discoveries {
+			sb.WriteString(fmt.Sprintf("- %s\n", discovery))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Requirements
+	if len(snapshot.Requirements) > 0 {
+		sb.WriteString("**Requirements:**\n")
+		for _, req := range snapshot.Requirements {
+			sb.WriteString(fmt.Sprintf("- %s\n", req))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Decisions
+	if len(snapshot.Decisions) > 0 {
+		sb.WriteString("**Architectural Decisions:**\n")
+		for _, decision := range snapshot.Decisions {
+			sb.WriteString(fmt.Sprintf("- %s\n", decision))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Critical results
+	if len(snapshot.CriticalResults) > 0 {
+		sb.WriteString("**Critical Tool Results:**\n")
+		for _, result := range snapshot.CriticalResults {
+			sb.WriteString(fmt.Sprintf("- **%s**: %s\n", result.ToolName, result.Summary))
+			if result.Details != "" && len(result.Details) < 500 {
+				sb.WriteString(fmt.Sprintf("  Details: %s\n", result.Details))
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	// Error patterns
+	if len(snapshot.ErrorPatterns) > 0 {
+		sb.WriteString("**Known Error Patterns:**\n")
+		for pattern, solution := range snapshot.ErrorPatterns {
+			sb.WriteString(fmt.Sprintf("- `%s`: %s\n", pattern, solution))
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("═══════════════════════════════════════════════════════════════════════\n")
+
+	return sb.String()
+}
+
+// NewContextSnapshot creates a new empty context snapshot.
+func NewContextSnapshot() *ContextSnapshot {
+	return &ContextSnapshot{
+		KeyFiles:        make(map[string]string),
+		Discoveries:     make([]string, 0),
+		ErrorPatterns:   make(map[string]string),
+		CriticalResults: make([]CriticalResult, 0),
+		Requirements:    make([]string, 0),
+		Decisions:       make([]string, 0),
+		CreatedAt:       time.Now(),
+	}
+}
+
+// AddKeyFile adds a key file with its summary to the snapshot.
+func (cs *ContextSnapshot) AddKeyFile(path, summary string) {
+	cs.KeyFiles[path] = summary
+}
+
+// AddDiscovery adds a discovery to the snapshot.
+func (cs *ContextSnapshot) AddDiscovery(discovery string) {
+	cs.Discoveries = append(cs.Discoveries, discovery)
+}
+
+// AddRequirement adds a requirement to the snapshot.
+func (cs *ContextSnapshot) AddRequirement(requirement string) {
+	cs.Requirements = append(cs.Requirements, requirement)
+}
+
+// AddDecision adds an architectural decision to the snapshot.
+func (cs *ContextSnapshot) AddDecision(decision string) {
+	cs.Decisions = append(cs.Decisions, decision)
+}
+
+// AddCriticalResult adds a critical tool result to the snapshot.
+func (cs *ContextSnapshot) AddCriticalResult(toolName, summary, details string) {
+	cs.CriticalResults = append(cs.CriticalResults, CriticalResult{
+		ToolName: toolName,
+		Summary:  summary,
+		Details:  details,
+	})
+}
+
+// AddErrorPattern adds an error pattern and its solution.
+func (cs *ContextSnapshot) AddErrorPattern(pattern, solution string) {
+	cs.ErrorPatterns[pattern] = solution
 }

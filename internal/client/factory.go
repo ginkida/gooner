@@ -43,6 +43,11 @@ func NewClient(ctx context.Context, cfg *config.Config, modelID string) (Client,
 	case "deepseek":
 		return newDeepSeekClient(cfg, modelID)
 	case "gemini":
+		// Check OAuth first
+		if cfg.API.HasOAuthToken("gemini") {
+			logging.Debug("using Gemini OAuth client", "email", cfg.API.GeminiOAuth.Email)
+			return NewGeminiOAuthClient(ctx, cfg)
+		}
 		return NewGeminiClient(ctx, cfg)
 	case "anthropic":
 		return newAnthropicClientForModelID(cfg, modelID)
@@ -80,7 +85,11 @@ func NewClient(ctx context.Context, cfg *config.Config, modelID string) (Client,
 			}
 		}
 
-		// Default to Gemini
+		// Default to Gemini (check OAuth first)
+		if cfg.API.HasOAuthToken("gemini") {
+			logging.Debug("using Gemini OAuth client (default)", "email", cfg.API.GeminiOAuth.Email)
+			return NewGeminiOAuthClient(ctx, cfg)
+		}
 		return NewGeminiClient(ctx, cfg)
 	}
 }

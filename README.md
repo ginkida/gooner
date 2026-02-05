@@ -56,8 +56,9 @@ Gokin (GLM-4 / Gemini Flash 3)   →     Claude Code (Claude Opus 4.5)
 - **Ollama** — Local LLMs (Llama, Qwen, DeepSeek, CodeLlama), free & private
 
 ### Intelligence
-- **Multi-Agent System** — Specialized agents (Explore, Bash, Plan, General)
+- **Multi-Agent System** — Specialized agents (Explore, Bash, Plan, General) with adaptive delegation
 - **Tree Planner** — Advanced planning with Beam Search, MCTS, A* algorithms
+- **Context Predictor** — Predicts needed files based on access patterns
 - **Semantic Search** — Find code by meaning, not just keywords
 
 ### Productivity
@@ -69,6 +70,7 @@ Gokin (GLM-4 / Gemini Flash 3)   →     Claude Code (Claude Opus 4.5)
 
 ### Extensibility
 - **MCP Support** — Connect to external MCP servers for additional tools
+- **Custom Agent Types** — Register your own specialized agents
 - **Permission System** — Control which operations require approval
 - **Hooks** — Automate actions (pre/post tool, on error, on start/exit)
 - **Themes** — Light and dark mode
@@ -100,6 +102,7 @@ sudo mv gokin /usr/local/bin/
 
 - Go 1.23+
 - One of:
+  - Google account with Gemini subscription (OAuth login)
   - Google Gemini API key (free tier available)
   - DeepSeek API key
   - GLM-4 API key
@@ -107,19 +110,25 @@ sudo mv gokin /usr/local/bin/
 
 ## Quick Start
 
-### 1. Get API Key
+### 1. Authentication
 
-Get your free Gemini API key at: https://aistudio.google.com/apikey
-
-### 2. Set API Key
-
+**Option A: OAuth (recommended for Gemini subscribers)**
 ```bash
-# Via environment variable (recommended)
+gokin
+> /oauth-login
+# Browser opens for Google authentication
+```
+
+**Option B: API Key**
+```bash
+# Get your free Gemini API key at: https://aistudio.google.com/apikey
+
+# Via environment variable
 export GEMINI_API_KEY="your-api-key"
 
 # Or via command in the app
 gokin
-> /login your-api-key
+> /login gemini your-api-key
 ```
 
 ### 2. Launch
@@ -320,18 +329,20 @@ All commands start with `/`:
 | `/permissions` | Manage tool permissions |
 | `/sandbox` | Toggle sandbox mode |
 | `/update` | Check for and install updates |
+| `/register-agent-type` | Register custom agent type |
 
 ### Authentication
 
 | Command | Description |
 |---------|-------------|
-| `/login <api_key>` | Set Gemini API key |
-| `/login <api_key> --deepseek` | Set DeepSeek API key |
-| `/login <api_key> --glm` | Set GLM API key |
-| `/login <api_key> --ollama` | Set Ollama API key (for remote servers) |
+| `/oauth-login` | Login via Google account (uses Gemini subscription) |
+| `/login gemini <api_key>` | Set Gemini API key |
+| `/login deepseek <api_key>` | Set DeepSeek API key |
+| `/login glm <api_key>` | Set GLM API key |
+| `/login ollama <api_key>` | Set Ollama API key (for remote servers) |
 | `/logout` | Remove saved API key |
 
-> **Note:** Ollama running locally doesn't require an API key. The `--ollama` flag is only needed for remote Ollama servers with authentication.
+> **Note:** OAuth login uses your Gemini subscription (not API credits). Ollama running locally doesn't require an API key.
 
 ### Interface
 
@@ -890,9 +901,15 @@ For complex tasks, Gokin uses advanced planning algorithms:
 
 | Algorithm | Description |
 |-----------|-------------|
-| **Beam Search** | Explores multiple paths, keeps best candidates |
+| **Beam Search** | Explores multiple paths, keeps best candidates (default) |
 | **MCTS** | Monte Carlo Tree Search for exploration/exploitation |
 | **A*** | Heuristic-based optimal path finding |
+
+Configure in `config.yaml`:
+```yaml
+plan:
+  algorithm: "beam"  # or "mcts", "astar"
+```
 
 ## Multi-Agent System
 
@@ -910,6 +927,25 @@ Agents can:
 - Share memory between sessions
 - Delegate subtasks to specialized agents
 - Self-reflect and correct errors
+- Learn from delegation success/failure (adaptive metrics)
+
+### Custom Agent Types
+
+Register your own specialized agents:
+
+```bash
+/register-agent-type coder "Coding specialist" --tools read,write,edit,bash --prompt "You are a coding expert"
+```
+
+Or in `config.yaml`:
+```yaml
+agents:
+  custom_types:
+    - name: "coder"
+      description: "Coding specialist"
+      tools: ["read", "write", "edit", "bash"]
+      system_prompt: "You are a coding expert focused on clean code."
+```
 
 ## Background Tasks
 

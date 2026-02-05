@@ -3,8 +3,12 @@ package commands
 import (
 	"context"
 	"fmt"
+	"os/exec"
+	"runtime"
 	"strings"
+	"time"
 
+	"gokin/internal/auth"
 	"gokin/internal/config"
 )
 
@@ -16,7 +20,9 @@ func (c *LoginCommand) Description() string { return "Set API key for Gemini or 
 func (c *LoginCommand) Usage() string {
 	return `/login                    - Show current status
 /login gemini <api_key>   - Set Gemini API key
-/login glm <api_key>      - Set GLM API key`
+/login glm <api_key>      - Set GLM API key
+
+Tip: Use /oauth-login for Google account authentication (uses your Gemini subscription)`
 }
 func (c *LoginCommand) GetMetadata() CommandMetadata {
 	return CommandMetadata{
@@ -58,7 +64,10 @@ Get your Gemini API key at: https://aistudio.google.com/apikey`, provider), nil
 		if provider == "gemini" {
 			return `Usage: /login gemini <api_key>
 
-Get your free Gemini API key at: https://aistudio.google.com/apikey`, nil
+Get your free Gemini API key at: https://aistudio.google.com/apikey
+
+Alternatively, use /oauth-login to sign in with your Google account
+(this uses your Gemini subscription instead of API credits).`, nil
 		}
 		return `Usage: /login glm <api_key>
 
@@ -113,7 +122,9 @@ func (c *LoginCommand) showStatus(cfg *config.Config) string {
 
 	// Gemini status
 	geminiStatus := "not configured"
-	if cfg.API.GeminiKey != "" {
+	if cfg.API.HasOAuthToken("gemini") {
+		geminiStatus = fmt.Sprintf("OAuth (%s)", cfg.API.GeminiOAuth.Email)
+	} else if cfg.API.GeminiKey != "" {
 		geminiStatus = "configured " + maskKey(cfg.API.GeminiKey)
 	} else if cfg.API.APIKey != "" && cfg.API.GetActiveProvider() == "gemini" {
 		geminiStatus = "configured " + maskKey(cfg.API.APIKey)
@@ -146,6 +157,7 @@ func (c *LoginCommand) showStatus(cfg *config.Config) string {
 	sb.WriteString("\nCommands:\n")
 	sb.WriteString("  /login gemini <key>  - Set Gemini API key\n")
 	sb.WriteString("  /login glm <key>     - Set GLM API key\n")
+	sb.WriteString("  /oauth-login         - Login via Google account\n")
 	sb.WriteString("  /provider            - Switch provider\n")
 	sb.WriteString("  /model               - Switch model\n")
 
@@ -438,7 +450,9 @@ func (c *StatusCommand) Execute(ctx context.Context, args []string, app AppInter
 	sb.WriteString("API Keys:\n")
 
 	geminiStatus := "not set"
-	if cfg.API.HasProvider("gemini") {
+	if cfg.API.HasOAuthToken("gemini") {
+		geminiStatus = fmt.Sprintf("OAuth (%s)", cfg.API.GeminiOAuth.Email)
+	} else if cfg.API.HasProvider("gemini") {
 		key := cfg.API.GeminiKey
 		if key == "" {
 			key = cfg.API.APIKey
@@ -462,4 +476,193 @@ func (c *StatusCommand) Execute(ctx context.Context, args []string, app AppInter
 	sb.WriteString(fmt.Sprintf("\nConfig: %s\n", config.GetConfigPath()))
 
 	return sb.String(), nil
+}
+
+// OAuthLoginCommand handles /oauth-login for Google Account authentication
+type OAuthLoginCommand struct{}
+
+func (c *OAuthLoginCommand) Name() string        { return "oauth-login" }
+func (c *OAuthLoginCommand) Description() string { return "Login to Gemini using Google account (OAuth)" }
+func (c *OAuthLoginCommand) Usage() string {
+	return `/oauth-login - Login to Gemini using your Google account
+
+This uses your Gemini subscription (not API credits).
+A browser window will open for Google authentication.`
+}
+func (c *OAuthLoginCommand) GetMetadata() CommandMetadata {
+	return CommandMetadata{
+		Category: CategoryAuthentication,
+		Icon:     "google",
+		Priority: 5,
+	}
+}
+
+func (c *OAuthLoginCommand) Execute(ctx context.Context, args []string, app AppInterface) (string, error) {
+	cfg := app.GetConfig()
+	if cfg == nil {
+		return "Failed to get configuration.", nil
+	}
+
+	// Check if already logged in via OAuth
+	if cfg.API.HasOAuthToken("gemini") {
+		return fmt.Sprintf("Already logged in via OAuth as %s.\n\nUse /oauth-logout to sign out first.", cfg.API.GeminiOAuth.Email), nil
+	}
+
+	// Create OAuth manager
+	manager := auth.NewGeminiOAuthManager()
+
+	// Generate auth URL
+	authURL, err := manager.GenerateAuthURL()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate auth URL: %w", err)
+	}
+
+	// Start callback server
+	server := auth.NewCallbackServer(auth.GeminiOAuthCallbackPort, manager.GetState())
+	if err := server.Start(); err != nil {
+		return "", fmt.Errorf("failed to start callback server: %w", err)
+	}
+	defer server.Stop()
+
+	// Try to open browser
+	browserOpened := openBrowser(authURL)
+
+	var sb strings.Builder
+	sb.WriteString("Opening browser for Google authentication...\n\n")
+	if !browserOpened {
+		sb.WriteString("Could not open browser automatically.\n")
+		sb.WriteString("Please open this URL in your browser:\n\n")
+		sb.WriteString(authURL + "\n\n")
+	}
+	sb.WriteString("Waiting for authentication (timeout: 5 minutes)...")
+
+	// Note: We can't actually show this message before waiting since Execute blocks.
+	// The user will see the result after the flow completes.
+
+	// Wait for callback
+	code, err := server.WaitForCode(auth.OAuthCallbackTimeout)
+	if err != nil {
+		return "", fmt.Errorf("authentication failed: %w", err)
+	}
+
+	// Exchange code for tokens
+	token, err := manager.ExchangeCode(ctx, code)
+	if err != nil {
+		return "", fmt.Errorf("failed to exchange code: %w", err)
+	}
+
+	// Save to config
+	cfg.API.GeminiOAuth = &config.OAuthTokenConfig{
+		AccessToken:  token.AccessToken,
+		RefreshToken: token.RefreshToken,
+		ExpiresAt:    token.ExpiresAt.Unix(),
+		Email:        token.Email,
+	}
+	cfg.API.ActiveProvider = "gemini"
+	cfg.Model.Provider = "gemini"
+
+	if err := app.ApplyConfig(cfg); err != nil {
+		return "", fmt.Errorf("failed to save config: %w", err)
+	}
+
+	email := token.Email
+	if email == "" {
+		email = "Google Account"
+	}
+
+	expiresIn := time.Until(token.ExpiresAt).Round(time.Minute)
+
+	return fmt.Sprintf(`Logged in as %s via OAuth
+
+Provider: gemini (OAuth)
+Model: %s
+Token expires in: %v
+
+Use /status to check your configuration.
+Use /oauth-logout to sign out.`, email, cfg.Model.Name, expiresIn), nil
+}
+
+// OAuthLogoutCommand handles /oauth-logout
+type OAuthLogoutCommand struct{}
+
+func (c *OAuthLogoutCommand) Name() string        { return "oauth-logout" }
+func (c *OAuthLogoutCommand) Description() string { return "Remove OAuth credentials" }
+func (c *OAuthLogoutCommand) Usage() string {
+	return `/oauth-logout - Remove Google OAuth credentials
+
+This will sign you out of your Google account for Gemini.
+You can use /login gemini <key> to use an API key instead.`
+}
+func (c *OAuthLogoutCommand) GetMetadata() CommandMetadata {
+	return CommandMetadata{
+		Category: CategoryAuthentication,
+		Icon:     "logout",
+		Priority: 15,
+	}
+}
+
+func (c *OAuthLogoutCommand) Execute(ctx context.Context, args []string, app AppInterface) (string, error) {
+	cfg := app.GetConfig()
+	if cfg == nil {
+		return "Failed to get configuration.", nil
+	}
+
+	if !cfg.API.HasOAuthToken("gemini") {
+		return "No OAuth credentials found.", nil
+	}
+
+	email := cfg.API.GeminiOAuth.Email
+
+	// Remove OAuth token
+	cfg.API.GeminiOAuth = nil
+
+	// Save config
+	if err := cfg.Save(); err != nil {
+		return "", fmt.Errorf("failed to save config: %w", err)
+	}
+
+	var sb strings.Builder
+	if email != "" {
+		sb.WriteString(fmt.Sprintf("Logged out from %s\n\n", email))
+	} else {
+		sb.WriteString("OAuth credentials removed.\n\n")
+	}
+
+	// Check if API key is available
+	if cfg.API.GeminiKey != "" {
+		sb.WriteString("Falling back to API key authentication.\n")
+	} else {
+		sb.WriteString("No API key configured.\n")
+		sb.WriteString("Use /login gemini <key> to set an API key.\n")
+		sb.WriteString("Or use /oauth-login to sign in again.")
+	}
+
+	return sb.String(), nil
+}
+
+// openBrowser opens a URL in the default browser
+func openBrowser(url string) bool {
+	var cmd *exec.Cmd
+
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "linux":
+		// Try xdg-open first, then common browsers
+		if _, err := exec.LookPath("xdg-open"); err == nil {
+			cmd = exec.Command("xdg-open", url)
+		} else if _, err := exec.LookPath("google-chrome"); err == nil {
+			cmd = exec.Command("google-chrome", url)
+		} else if _, err := exec.LookPath("firefox"); err == nil {
+			cmd = exec.Command("firefox", url)
+		} else {
+			return false
+		}
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", url)
+	default:
+		return false
+	}
+
+	return cmd.Start() == nil
 }

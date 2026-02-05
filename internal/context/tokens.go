@@ -307,6 +307,16 @@ func (t *TokenCounter) hashContents(contents []*genai.Content) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// ContentType represents the type of content for token estimation.
+type ContentType int
+
+const (
+	ContentTypeProse ContentType = iota
+	ContentTypeCode
+	ContentTypeJSON
+	ContentTypeMixed
+)
+
 // EstimateTokens provides a rough estimate without API call.
 // Uses a weighted combination of word-based and character-based estimation
 // for better accuracy across different content types (prose, code, mixed).
@@ -315,27 +325,153 @@ func EstimateTokens(text string) int {
 		return 0
 	}
 
-	// Word-based estimation (better for natural language text)
-	// Average is ~1.3 tokens per word for English text
-	words := len(strings.Fields(text))
-	byWords := int(float64(words) * 1.3)
+	// Detect content type and use appropriate estimation
+	contentType := detectContentType(text)
+	return estimateTokensForType(text, contentType)
+}
 
-	// Character-based estimation (better for code and non-English)
-	// Average is ~4 characters per token
+// estimateTokensForType estimates tokens based on detected content type.
+func estimateTokensForType(text string, contentType ContentType) int {
 	chars := len(text)
-	byChars := chars / 4
 
-	// Weighted average: words are more accurate for text-heavy content,
-	// but characters catch things like long variable names, URLs, etc.
-	// Weight words 2x since most LLM content is text-heavy
-	estimate := (byWords*2 + byChars) / 3
+	switch contentType {
+	case ContentTypeCode:
+		// Code has more tokens per character due to:
+		// - camelCase and snake_case identifiers (split into multiple tokens)
+		// - Short keywords (func, if, for, etc.)
+		// - Operators and punctuation
+		// Average: ~0.25 chars/token = 4 tokens/char... wait, that's inverted
+		// Actually: ~3.2 chars per token for code
+		return int(float64(chars) / 3.2)
 
-	// Minimum 1 token for non-empty text
-	if estimate < 1 {
-		return 1
+	case ContentTypeJSON:
+		// JSON is even more token-dense due to:
+		// - Quotes, colons, commas, braces
+		// - Keys are often tokenized separately
+		// Average: ~3 chars per token
+		return int(float64(chars) / 3.0)
+
+	case ContentTypeProse:
+		// Natural language text
+		// Word-based estimation is better for prose
+		words := len(strings.Fields(text))
+		byWords := int(float64(words) * 1.3)
+
+		// Character-based as fallback
+		byChars := chars / 4
+
+		// Weighted average favoring word-based
+		return (byWords*3 + byChars) / 4
+
+	default: // ContentTypeMixed
+		// Use combined heuristic
+		words := len(strings.Fields(text))
+		byWords := int(float64(words) * 1.3)
+		byChars := int(float64(chars) / 3.5) // Between code and prose
+
+		return (byWords + byChars) / 2
+	}
+}
+
+// detectContentType analyzes text to determine its type.
+func detectContentType(text string) ContentType {
+	if len(text) == 0 {
+		return ContentTypeProse
 	}
 
-	return estimate
+	// Quick heuristics based on content
+	trimmed := strings.TrimSpace(text)
+
+	// JSON detection
+	if (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
+		(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]")) {
+		return ContentTypeJSON
+	}
+
+	// Count code indicators
+	codeIndicators := 0
+	lines := strings.Split(text, "\n")
+	totalLines := len(lines)
+
+	for _, line := range lines {
+		trimLine := strings.TrimSpace(line)
+
+		// Go/C-style code indicators
+		if strings.HasPrefix(trimLine, "func ") ||
+			strings.HasPrefix(trimLine, "type ") ||
+			strings.HasPrefix(trimLine, "package ") ||
+			strings.HasPrefix(trimLine, "import ") ||
+			strings.HasPrefix(trimLine, "//") ||
+			strings.HasPrefix(trimLine, "/*") ||
+			strings.HasPrefix(trimLine, "*/") ||
+			strings.HasSuffix(trimLine, "{") ||
+			strings.HasSuffix(trimLine, "}") ||
+			strings.HasSuffix(trimLine, ";") ||
+			strings.Contains(trimLine, " := ") ||
+			strings.Contains(trimLine, "if err != nil") ||
+			strings.Contains(trimLine, "return ") {
+			codeIndicators++
+		}
+
+		// Python/JS/Other code indicators
+		if strings.HasPrefix(trimLine, "def ") ||
+			strings.HasPrefix(trimLine, "class ") ||
+			strings.HasPrefix(trimLine, "function ") ||
+			strings.HasPrefix(trimLine, "const ") ||
+			strings.HasPrefix(trimLine, "let ") ||
+			strings.HasPrefix(trimLine, "var ") ||
+			strings.HasPrefix(trimLine, "#") ||
+			strings.Contains(trimLine, " = ") {
+			codeIndicators++
+		}
+	}
+
+	// If more than 30% of lines look like code, treat as code
+	if totalLines > 0 && float64(codeIndicators)/float64(totalLines) > 0.3 {
+		return ContentTypeCode
+	}
+
+	// Check for camelCase/snake_case density (indicates code even without structure)
+	camelCaseCount := 0
+	words := strings.Fields(text)
+	for _, word := range words {
+		if containsCamelCase(word) || strings.Contains(word, "_") {
+			camelCaseCount++
+		}
+	}
+
+	if len(words) > 0 && float64(camelCaseCount)/float64(len(words)) > 0.2 {
+		return ContentTypeMixed
+	}
+
+	return ContentTypeProse
+}
+
+// containsCamelCase checks if a word contains camelCase pattern.
+func containsCamelCase(word string) bool {
+	hasLower := false
+	hasUpper := false
+	for _, r := range word {
+		if r >= 'a' && r <= 'z' {
+			hasLower = true
+		}
+		if r >= 'A' && r <= 'Z' {
+			hasUpper = true
+		}
+		// Transition from lower to upper indicates camelCase
+		if hasLower && hasUpper {
+			return true
+		}
+	}
+	return false
+}
+
+// EstimateTokensWithType estimates tokens with explicit content type.
+func EstimateTokensWithType(text string, contentType ContentType) int {
+	if text == "" {
+		return 0
+	}
+	return estimateTokensForType(text, contentType)
 }
 
 // EstimateContentsTokens estimates tokens for contents without API call.
