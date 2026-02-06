@@ -436,7 +436,7 @@ func (t *GrepTool) getFiles(searchPath, globPattern string) ([]string, error) {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("path not found: %s", searchPath)
 		}
-		return nil, fmt.Errorf("error accessing path: %s", err)
+		return nil, fmt.Errorf("error accessing path: %w", err)
 	}
 
 	// If it's a file, return just that file
@@ -453,7 +453,7 @@ func (t *GrepTool) getFiles(searchPath, globPattern string) ([]string, error) {
 	// Find files
 	matches, err := doublestar.FilepathGlob(fullPattern)
 	if err != nil {
-		return nil, fmt.Errorf("invalid glob pattern: %s", err)
+		return nil, fmt.Errorf("invalid glob pattern: %w", err)
 	}
 
 	// Filter to only files (not directories)
@@ -568,7 +568,7 @@ func (t *GrepTool) ExecuteStreaming(ctx context.Context, args map[string]any) (*
 	if t.pathValidator != nil {
 		validPath, err := t.pathValidator.Validate(searchPath)
 		if err != nil {
-			return nil, fmt.Errorf("path validation failed: %s", err)
+			return nil, fmt.Errorf("path validation failed: %w", err)
 		}
 		searchPath = validPath
 	}
@@ -580,7 +580,7 @@ func (t *GrepTool) ExecuteStreaming(ctx context.Context, args map[string]any) (*
 	}
 	re, err := regexp.Compile(regexPattern)
 	if err != nil {
-		return nil, fmt.Errorf("invalid regex: %s", err)
+		return nil, fmt.Errorf("invalid regex: %w", err)
 	}
 
 	// Get files to search

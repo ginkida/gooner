@@ -52,14 +52,14 @@ func (i *Installer) Install(ctx context.Context, newBinaryPath string, version s
 	// Create backup first
 	backupInfo, err := i.rollbackMgr.CreateBackup(i.currentBinary, version)
 	if err != nil {
-		return fmt.Errorf("%w: failed to create backup: %v", ErrInstallFailed, err)
+		return fmt.Errorf("%w: failed to create backup: %w", ErrInstallFailed, err)
 	}
 
 	i.reportProgress(StatusInstalling, "Verifying new binary...")
 
 	// Verify the new binary is executable
 	if err := i.verifyBinary(newBinaryPath); err != nil {
-		return fmt.Errorf("%w: %v", ErrCorruptBinary, err)
+		return fmt.Errorf("%w: %w", ErrCorruptBinary, err)
 	}
 
 	i.reportProgress(StatusInstalling, "Installing update...")
@@ -72,7 +72,7 @@ func (i *Installer) Install(ctx context.Context, newBinaryPath string, version s
 			return fmt.Errorf("%w: install failed (%v) and rollback failed (%v)",
 				ErrInstallFailed, err, rollbackErr)
 		}
-		return fmt.Errorf("%w: %v (rolled back successfully)", ErrInstallFailed, err)
+		return fmt.Errorf("%w (rolled back successfully): %w", ErrInstallFailed, err)
 	}
 
 	// Mark backup as successful

@@ -164,7 +164,7 @@ func (rm *RollbackManager) GetLatestBackup() (*BackupInfo, error) {
 func (rm *RollbackManager) Rollback(backupID string) error {
 	backups, err := rm.ListBackups()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrRollbackFailed, err)
+		return fmt.Errorf("%w: %w", ErrRollbackFailed, err)
 	}
 
 	var backup *BackupInfo
@@ -215,7 +215,7 @@ func (rm *RollbackManager) RollbackToBackup(backup *BackupInfo) error {
 
 	// Restore the backup
 	if err := rm.restoreBackup(backup.Path, targetPath); err != nil {
-		return fmt.Errorf("%w: %v", ErrRollbackFailed, err)
+		return fmt.Errorf("%w: %w", ErrRollbackFailed, err)
 	}
 
 	return nil

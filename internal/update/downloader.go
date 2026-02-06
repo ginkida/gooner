@@ -53,7 +53,7 @@ func (d *Downloader) Download(ctx context.Context, url string, progress Progress
 	// Send request
 	resp, err := d.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrDownloadFailed, err)
+		return "", fmt.Errorf("%w: %w", ErrDownloadFailed, err)
 	}
 	defer resp.Body.Close()
 
@@ -87,7 +87,7 @@ func (d *Downloader) Download(ctx context.Context, url string, progress Progress
 	_, err = io.Copy(pw, resp.Body)
 	if err != nil {
 		os.Remove(tmpFile.Name())
-		return "", fmt.Errorf("%w: %v", ErrDownloadFailed, err)
+		return "", fmt.Errorf("%w: %w", ErrDownloadFailed, err)
 	}
 
 	return tmpFile.Name(), nil

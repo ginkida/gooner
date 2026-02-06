@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -70,7 +71,7 @@ func (m *Manager) ConnectAll(ctx context.Context) error {
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("connection errors: %v", errs)
+		return errors.Join(errs...)
 	}
 
 	return nil

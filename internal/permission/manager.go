@@ -209,12 +209,6 @@ func (m *Manager) rememberKey(key string, decision Decision) {
 	m.sessionCache.Set(key, decision)
 }
 
-// Remember stores a session-level decision for a tool.
-// Deprecated: Use RememberWithArgs for sensitive tools.
-func (m *Manager) Remember(toolName string, decision Decision) {
-	m.sessionCache.Set(toolName, decision)
-}
-
 // RememberWithArgs stores a session-level decision for a tool with args.
 func (m *Manager) RememberWithArgs(toolName string, args map[string]any, decision Decision) {
 	key := m.cacheKey(toolName, args)

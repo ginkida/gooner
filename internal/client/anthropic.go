@@ -715,7 +715,7 @@ func (c *AnthropicClient) doStreamRequest(ctx context.Context, requestBody map[s
 						logging.Warn("failed to parse SSE event", "error", err, "data", preview)
 						// Notify UI about recoverable parse error
 						if statusCb != nil {
-							statusCb.OnError(fmt.Errorf("incomplete SSE data: %v", err), true)
+							statusCb.OnError(fmt.Errorf("incomplete SSE data: %w", err), true)
 						}
 						continue waitLoop
 					}
@@ -1018,7 +1018,6 @@ func (c *AnthropicClient) convertHistoryToMessagesWithSystem(history []*genai.Co
 }
 
 // convertHistoryToMessages converts Gemini history to Anthropic messages format.
-// Deprecated: use convertHistoryToMessagesWithSystem instead.
 func (c *AnthropicClient) convertHistoryToMessages(history []*genai.Content, newMessage string) []map[string]interface{} {
 	messages, _ := c.convertHistoryToMessagesWithSystem(history, newMessage)
 	return messages
@@ -1149,7 +1148,6 @@ func (c *AnthropicClient) convertHistoryWithResultsAndSystem(history []*genai.Co
 }
 
 // convertHistoryWithResults converts history with function results to messages.
-// Deprecated: use convertHistoryWithResultsAndSystem instead.
 func (c *AnthropicClient) convertHistoryWithResults(history []*genai.Content, results []*genai.FunctionResponse) []map[string]interface{} {
 	messages, _ := c.convertHistoryWithResultsAndSystem(history, results)
 	return messages

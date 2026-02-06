@@ -3,7 +3,7 @@
 <p align="center">
   <a href="https://github.com/ginkida/gokin/releases"><img src="https://img.shields.io/github/v/release/ginkida/gokin" alt="Release"></a>
   <a href="https://github.com/ginkida/gokin/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ginkida/gokin" alt="License"></a>
-  <img src="https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go" alt="Go Version">
+  <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go" alt="Go Version">
 </p>
 
 <p align="center">
@@ -111,7 +111,7 @@ go install ./cmd/gokin
 
 ### Requirements
 
-- Go 1.23+
+- Go 1.25+
 - One of:
   - Google account with Gemini subscription (OAuth login)
   - Google Gemini API key (free tier available)

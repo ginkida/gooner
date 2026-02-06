@@ -94,7 +94,7 @@ func (c *Checker) GetReleases(ctx context.Context, limit int) ([]ReleaseInfo, er
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNetworkError, err)
+		return nil, fmt.Errorf("%w: %w", ErrNetworkError, err)
 	}
 	defer resp.Body.Close()
 
@@ -127,7 +127,7 @@ func (c *Checker) fetchRelease(ctx context.Context, url string) (*ReleaseInfo, e
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNetworkError, err)
+		return nil, fmt.Errorf("%w: %w", ErrNetworkError, err)
 	}
 	defer resp.Body.Close()
 
