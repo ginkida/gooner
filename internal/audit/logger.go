@@ -21,6 +21,11 @@ type Logger struct {
 	wg           sync.WaitGroup // Track pending async saves
 	enabled      bool
 	retention    time.Duration
+
+	// Debounced save support
+	dirty     bool
+	saveTimer *time.Timer
+	saveMu    sync.Mutex
 }
 
 // Config holds audit logger configuration.
@@ -92,12 +97,9 @@ func (l *Logger) Log(entry *Entry) error {
 		l.entries = l.entries[len(l.entries)-l.maxEntries:]
 	}
 
-	// Save asynchronously to avoid blocking, but track with WaitGroup
-	l.wg.Add(1)
-	go func() {
-		defer l.wg.Done()
-		l.save()
-	}()
+	// Schedule debounced save instead of spawning a goroutine per Log call
+	l.dirty = true
+	l.scheduleSave()
 
 	return nil
 }
@@ -207,9 +209,27 @@ func (l *Logger) Len() int {
 	return len(l.entries)
 }
 
-// Flush waits for all pending async saves to complete.
+// Flush forces an immediate save if dirty and waits for all pending saves.
 // This should be called before shutdown to ensure no data is lost.
 func (l *Logger) Flush() {
+	// Cancel any pending debounced save
+	l.saveMu.Lock()
+	if l.saveTimer != nil {
+		l.saveTimer.Stop()
+		l.saveTimer = nil
+	}
+	l.saveMu.Unlock()
+
+	// Force save if dirty
+	l.mu.Lock()
+	if l.dirty {
+		l.dirty = false
+		l.mu.Unlock()
+		l.save()
+	} else {
+		l.mu.Unlock()
+	}
+
 	l.wg.Wait()
 }
 
@@ -298,7 +318,32 @@ func (l *Logger) save() error {
 	}
 
 	filePath := l.getFilePath()
-	return os.WriteFile(filePath, data, 0644)
+	return os.WriteFile(filePath, data, 0600)
+}
+
+// scheduleSave schedules a debounced save operation.
+// Multiple calls within 2 seconds will be coalesced into a single save.
+func (l *Logger) scheduleSave() {
+	l.saveMu.Lock()
+	defer l.saveMu.Unlock()
+
+	if l.saveTimer != nil {
+		l.saveTimer.Stop()
+	}
+
+	l.saveTimer = time.AfterFunc(2*time.Second, func() {
+		l.mu.Lock()
+		if !l.dirty {
+			l.mu.Unlock()
+			return
+		}
+		l.dirty = false
+		l.mu.Unlock()
+
+		l.wg.Add(1)
+		defer l.wg.Done()
+		l.save()
+	})
 }
 
 // Cleanup removes entries older than retention period.
@@ -326,11 +371,8 @@ func (l *Logger) Cleanup() int {
 	l.entries = kept
 
 	if removed > 0 {
-		l.wg.Add(1)
-		go func() {
-			defer l.wg.Done()
-			l.save()
-		}()
+		l.dirty = true
+		l.scheduleSave()
 	}
 
 	return removed

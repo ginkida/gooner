@@ -375,6 +375,14 @@ func (a *Agent) DisableAutoCheckpoint() {
 	a.autoCheckpoint = false
 }
 
+// Close flushes pending data (project learning) to prevent data loss on shutdown.
+func (a *Agent) Close() error {
+	if a.learning != nil {
+		return a.learning.Flush()
+	}
+	return nil
+}
+
 // maybeAutoCheckpoint saves a checkpoint if auto-checkpoint is enabled and interval has passed.
 func (a *Agent) maybeAutoCheckpoint() {
 	if !a.autoCheckpoint || a.store == nil {

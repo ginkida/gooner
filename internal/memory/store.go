@@ -560,26 +560,32 @@ func (s *Store) saveFile(path string, entries []*Entry) error {
 }
 
 // pruneOldest removes the oldest entries to stay within limit.
+// Considers both project entries and global entries when pruning.
 func (s *Store) pruneOldest() {
-	if s.maxEntries <= 0 || len(s.entries) <= s.maxEntries {
+	totalCount := len(s.entries) + len(s.globalEntries)
+	if s.maxEntries <= 0 || totalCount <= s.maxEntries {
 		return
 	}
 
-	// Get all entries sorted by timestamp
-	entries := make([]*Entry, 0, len(s.entries))
+	// Collect all entries from both stores
+	all := make([]*Entry, 0, totalCount)
 	for _, entry := range s.entries {
-		entries = append(entries, entry)
+		all = append(all, entry)
+	}
+	for _, entry := range s.globalEntries {
+		all = append(all, entry)
 	}
 
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Timestamp.Before(entries[j].Timestamp)
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].Timestamp.Before(all[j].Timestamp)
 	})
 
-	// Remove oldest entries
-	toRemove := len(entries) - s.maxEntries
+	// Remove oldest entries from the appropriate store
+	toRemove := totalCount - s.maxEntries
 	for i := 0; i < toRemove; i++ {
-		entry := entries[i]
+		entry := all[i]
 		delete(s.entries, entry.ID)
+		delete(s.globalEntries, entry.ID)
 		if entry.Key != "" {
 			delete(s.byKey, entry.Key)
 		}
@@ -605,16 +611,16 @@ func (s *Store) scheduleSave() {
 
 	// Schedule new save after 2 seconds
 	s.saveTimer = time.AfterFunc(2*time.Second, func() {
-		s.mu.RLock()
-		dirty := s.dirty
-		s.mu.RUnlock()
-
-		if dirty {
-			s.mu.Lock()
-			_ = s.save()
-			s.dirty = false
+		s.mu.Lock()
+		if !s.dirty {
 			s.mu.Unlock()
+			return
 		}
+		err := s.save()
+		if err == nil {
+			s.dirty = false
+		}
+		s.mu.Unlock()
 	})
 }
 

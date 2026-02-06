@@ -51,6 +51,9 @@ type ContextManager struct {
 	responseCompressor *ResponseCompressor
 	keyFiles           map[string]bool // Files critical to the session, always preserved
 	tokenHistory       []tokenSnapshot  // Token usage history for trend prediction
+
+	// Semaphore to limit concurrent async token count goroutines
+	tokenCountSem chan struct{}
 }
 
 // NewContextManager creates a new context manager.
@@ -102,6 +105,7 @@ func NewContextManager(
 		responseCompressor: responseCompressor,
 		keyFiles:           make(map[string]bool),
 		tokenHistory:       make([]tokenSnapshot, 0, 20),
+		tokenCountSem:      make(chan struct{}, 3),
 	}
 }
 
@@ -224,31 +228,37 @@ func (m *ContextManager) PrepareForRequest(ctx context.Context) error {
 	}
 	m.mu.Unlock()
 
-	// Launch async precise token count in background
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				logging.Error("panic in async token count", "error", r)
+	// Launch async precise token count in background (bounded by semaphore)
+	select {
+	case m.tokenCountSem <- struct{}{}:
+		go func() {
+			defer func() { <-m.tokenCountSem }()
+			defer func() {
+				if r := recover(); r != nil {
+					logging.Error("panic in async token count", "error", r)
+				}
+			}()
+
+			asyncCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			precise, err := m.tokenCounter.CountContents(asyncCtx, history)
+			if err != nil {
+				return // Keep using estimate
 			}
+			m.metrics.RecordAPICount()
+
+			m.mu.Lock()
+			m.lastEstimatedTokens = precise
+			m.currentTokens = precise
+			u := m.tokenCounter.GetUsage(precise)
+			u.IsEstimate = false
+			m.lastUsage = &u
+			m.mu.Unlock()
 		}()
-
-		asyncCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		precise, err := m.tokenCounter.CountContents(asyncCtx, history)
-		if err != nil {
-			return // Keep using estimate
-		}
-		m.metrics.RecordAPICount()
-
-		m.mu.Lock()
-		m.lastEstimatedTokens = precise
-		m.currentTokens = precise
-		u := m.tokenCounter.GetUsage(precise)
-		u.IsEstimate = false
-		m.lastUsage = &u
-		m.mu.Unlock()
-	}()
+	default:
+		// Semaphore full, skip async count — use estimate
+	}
 
 	// Record metrics
 	m.metrics.RecordPrepare(time.Since(startTime), tokens)

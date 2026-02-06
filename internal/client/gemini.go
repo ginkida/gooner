@@ -238,10 +238,11 @@ func (c *GeminiClient) generateContentStream(ctx context.Context, contents []*ge
 	var lastErr error
 
 	// Retry loop
+	maxDelay := 30 * time.Second
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
 			// Exponential backoff with jitter
-			delay := c.retryDelay * time.Duration(1<<uint(attempt-1))
+			delay := CalculateBackoff(c.retryDelay, attempt-1, maxDelay)
 			logging.Info("retrying Gemini request", "attempt", attempt, "delay", delay)
 
 			// Notify UI about retry
@@ -522,9 +523,10 @@ func (c *GeminiClient) Close() error {
 func (c *GeminiClient) CountTokens(ctx context.Context, contents []*genai.Content) (*genai.CountTokensResponse, error) {
 	var lastErr error
 
+	maxDelay := 30 * time.Second
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
-			delay := c.retryDelay * time.Duration(1<<uint(attempt-1))
+			delay := CalculateBackoff(c.retryDelay, attempt-1, maxDelay)
 
 			// Notify UI about retry
 			if c.statusCallback != nil {

@@ -1416,3 +1416,15 @@ func (r *Runner) saveAgentState(agent *Agent) {
 		}
 	}
 }
+
+// Close flushes all agent data (project learning) to prevent data loss on shutdown.
+func (r *Runner) Close() {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, agent := range r.agents {
+		if err := agent.Close(); err != nil {
+			logging.Warn("failed to close agent", "agent_id", agent.ID, "error", err)
+		}
+	}
+}

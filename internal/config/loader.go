@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -65,7 +66,9 @@ func loadProjectConfig(cfg *Config) {
 		projectConfig := filepath.Join(dir, ".gokin", "config.yaml")
 		if _, err := os.Stat(projectConfig); err == nil {
 			// Found project config, merge it
-			_ = loadFromFile(cfg, projectConfig)
+			if err := loadFromFile(cfg, projectConfig); err != nil {
+				slog.Warn("failed to load project config", "path", projectConfig, "error", err)
+			}
 			return
 		}
 

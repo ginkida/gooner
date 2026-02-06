@@ -37,9 +37,10 @@ type Client struct {
 	done   chan struct{}
 
 	// Reconnection
-	backoff          time.Duration
-	maxBackoff       time.Duration
-	consecutiveFails int
+	backoff              time.Duration
+	maxBackoff           time.Duration
+	consecutiveFails     int
+	maxReconnectAttempts int
 }
 
 // NewClient creates a new MCP client with the specified transport.
@@ -70,8 +71,9 @@ func NewClient(cfg *ServerConfig) (*Client, error) {
 		ctx:        ctx,
 		cancel:     cancel,
 		done:       make(chan struct{}),
-		backoff:    100 * time.Millisecond,
-		maxBackoff: 30 * time.Second,
+		backoff:              100 * time.Millisecond,
+		maxBackoff:           30 * time.Second,
+		maxReconnectAttempts: 10,
 	}
 
 	// Start message receiver goroutine
@@ -122,8 +124,17 @@ func (c *Client) receiveLoop() {
 }
 
 // reconnect attempts to recreate the transport with exponential backoff.
+// Returns true if reconnection should continue, false to stop the receive loop.
 func (c *Client) reconnect() bool {
 	c.mu.Lock()
+	// Check if we've exceeded max reconnect attempts
+	if c.consecutiveFails >= c.maxReconnectAttempts {
+		c.mu.Unlock()
+		logging.Error("MCP max reconnect attempts reached, giving up",
+			"server", c.serverName,
+			"attempts", c.consecutiveFails)
+		return false
+	}
 	currentBackoff := c.backoff
 	// Exponential backoff: double each time, capped at maxBackoff
 	c.backoff = c.backoff * 2
@@ -156,8 +167,8 @@ func (c *Client) reconnect() bool {
 	}
 
 	if err != nil {
-		logging.Warn("MCP reconnect failed", "error", err)
-		return true // Keep trying
+		logging.Warn("MCP transport recreation failed", "error", err, "consecutive_fails", c.consecutiveFails)
+		return true // Keep trying (consecutiveFails will be checked next iteration)
 	}
 
 	// Swap transport
@@ -175,8 +186,8 @@ func (c *Client) reconnect() bool {
 	defer cancel()
 
 	if err := c.Initialize(initCtx); err != nil {
-		logging.Warn("MCP re-initialize failed", "error", err)
-		return true // Keep trying
+		logging.Warn("MCP re-initialize failed", "error", err, "consecutive_fails", c.consecutiveFails)
+		return true // Keep trying (consecutiveFails will be checked next iteration)
 	}
 
 	logging.Info("MCP reconnected successfully", "server", c.serverName)

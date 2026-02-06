@@ -215,7 +215,19 @@ func (a *App) gracefulShutdown(ctx context.Context) {
 		}
 	}
 
-	// 12. Save session history
+	// 12. Flush agent data (project learning) to prevent data loss
+	if a.agentRunner != nil {
+		logging.Debug("flushing agent data")
+		a.agentRunner.Close()
+	}
+
+	// 13. Flush audit logger to ensure all entries are persisted
+	if a.auditLogger != nil {
+		logging.Debug("flushing audit logger")
+		a.auditLogger.Flush()
+	}
+
+	// 14. Save session history
 	a.saveSessionHistory()
 
 	// 13. Close client

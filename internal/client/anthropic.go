@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"strings"
 	"sync"
@@ -377,18 +376,9 @@ func (c *AnthropicClient) isRetryableError(err error, statusCode int) bool {
 	return false
 }
 
-// calculateBackoffWithJitter calculates exponential backoff with jitter.
-// This prevents thundering herd problem when many clients retry simultaneously.
+// calculateBackoffWithJitter is a convenience wrapper around CalculateBackoff.
 func calculateBackoffWithJitter(baseDelay time.Duration, attempt int, maxDelay time.Duration) time.Duration {
-	// Exponential backoff: baseDelay * 2^attempt
-	delay := baseDelay * time.Duration(1<<uint(attempt))
-	if delay > maxDelay {
-		delay = maxDelay
-	}
-
-	// Add jitter: random value between 0 and 25% of delay
-	jitter := time.Duration(rand.Int63n(int64(delay / 4)))
-	return delay + jitter
+	return CalculateBackoff(baseDelay, attempt, maxDelay)
 }
 
 // streamRequest performs a streaming request to the Anthropic API with retry logic.
@@ -544,6 +534,17 @@ func (c *AnthropicClient) doStreamRequest(ctx context.Context, requestBody map[s
 	c.mu.RLock()
 	statusCb := c.statusCallback
 	c.mu.RUnlock()
+
+	// Monitor context cancellation to force-close response body,
+	// unblocking any blocked scanner.Scan() call.
+	go func() {
+		select {
+		case <-ctx.Done():
+			resp.Body.Close()
+		case <-done:
+			// Stream finished normally, nothing to do
+		}
+	}()
 
 	// Process stream in goroutine
 	go func() {

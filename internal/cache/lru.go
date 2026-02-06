@@ -21,18 +21,54 @@ type LRUCache[K comparable, V any] struct {
 	entries   map[K]*entry[K, V]
 	evictList *list.List
 	mu        sync.RWMutex
+
+	// Background cleanup
+	cleanupStop chan struct{}
 }
 
 // NewLRUCache creates a new LRU cache with the given capacity and TTL.
+// A background goroutine periodically removes expired entries.
+// Call Close() to stop the background cleanup goroutine.
 func NewLRUCache[K comparable, V any](capacity int, ttl time.Duration) *LRUCache[K, V] {
 	if capacity < 1 {
 		capacity = 1
 	}
-	return &LRUCache[K, V]{
-		capacity:  capacity,
-		ttl:       ttl,
-		entries:   make(map[K]*entry[K, V]),
-		evictList: list.New(),
+	c := &LRUCache[K, V]{
+		capacity:    capacity,
+		ttl:         ttl,
+		entries:     make(map[K]*entry[K, V]),
+		evictList:   list.New(),
+		cleanupStop: make(chan struct{}),
+	}
+
+	// Start background cleanup goroutine
+	go c.cleanupLoop()
+
+	return c
+}
+
+// cleanupLoop periodically removes expired entries.
+func (c *LRUCache[K, V]) cleanupLoop() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			c.Cleanup()
+		case <-c.cleanupStop:
+			return
+		}
+	}
+}
+
+// Close stops the background cleanup goroutine and releases resources.
+func (c *LRUCache[K, V]) Close() {
+	select {
+	case <-c.cleanupStop:
+		// Already closed
+	default:
+		close(c.cleanupStop)
 	}
 }
 

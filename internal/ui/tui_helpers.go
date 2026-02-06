@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -230,10 +231,11 @@ func (m Model) getCommandHint(input string) string {
 	return ""
 }
 
-// shortenPath shortens a path to fit within maxLen while preserving the filename.
-// Uses smart truncation: shows directory prefix + ... + filename
+// shortenPath shortens a path to fit within maxLen runes while preserving the filename.
+// Uses smart truncation: shows directory prefix + ... + filename.
+// Unicode-safe: uses rune count instead of byte length.
 func shortenPath(path string, maxLen int) string {
-	if len(path) <= maxLen {
+	if utf8.RuneCountInString(path) <= maxLen {
 		return path
 	}
 
@@ -243,7 +245,8 @@ func shortenPath(path string, maxLen int) string {
 		path = "~" + path[len(home):]
 	}
 
-	if len(path) <= maxLen {
+	runes := []rune(path)
+	if len(runes) <= maxLen {
 		return path
 	}
 
@@ -251,21 +254,23 @@ func shortenPath(path string, maxLen int) string {
 	lastSlash := strings.LastIndex(path, "/")
 	if lastSlash == -1 {
 		// No slash, truncate from the left
-		return "..." + path[len(path)-maxLen+3:]
+		return "..." + string(runes[len(runes)-maxLen+3:])
 	}
 
 	filename := path[lastSlash:] // includes leading /
+	filenameRunes := []rune(filename)
 
 	// If filename alone fits, show directory prefix + ... + filename
-	if len(filename) < maxLen-6 { // 6 = len("...") + some prefix
-		availableForDir := maxLen - len(filename) - 3
+	if len(filenameRunes) < maxLen-6 { // 6 = len("...") + some prefix
+		availableForDir := maxLen - len(filenameRunes) - 3
 		if availableForDir > 3 {
-			return path[:availableForDir] + "..." + filename
+			dirRunes := []rune(path)
+			return string(dirRunes[:availableForDir]) + "..." + filename
 		}
 	}
 
 	// Fallback: truncate from the left to always show filename
-	return "..." + path[len(path)-maxLen+3:]
+	return "..." + string(runes[len(runes)-maxLen+3:])
 }
 
 // extractToolInfo extracts displayable info from tool arguments.

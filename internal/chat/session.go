@@ -61,31 +61,34 @@ func (s *Session) SetChangeHandler(handler ChangeHandler) {
 }
 
 // notifyChange notifies the handler of history changes.
+// Caller must hold s.mu.Lock(). This method releases the lock before calling
+// the handler and does NOT re-acquire it. After calling notifyChange, the
+// caller must NOT use locked state (use defer-friendly pattern).
 func (s *Session) notifyChange(oldCount int) {
-	if s.onChange == nil {
-		return
-	}
-
-	// Capture event data BEFORE unlocking to avoid race conditions
+	// Capture event data and handler BEFORE unlocking
+	handler := s.onChange
 	event := ChangeEvent{
 		OldCount: oldCount,
 		NewCount: len(s.History),
 		Version:  s.version,
 	}
 
-	// Release lock before calling handler to prevent deadlock
+	// Always release the lock — whether or not handler is set
 	s.mu.Unlock()
+
+	if handler == nil {
+		return
+	}
 
 	// Protect against panics in the handler
 	defer func() {
 		if r := recover(); r != nil {
 			// Log panic but don't crash
-			// In production, you might want to log this
 		}
 	}()
 
 	// Call handler outside lock (prevent deadlock if handler tries to access session)
-	s.onChange(event)
+	handler(event)
 }
 
 // AddUserMessage adds a user message to the history.
@@ -252,14 +255,13 @@ func generateSessionID() string {
 // AddContentWithTokens adds content with its token count.
 func (s *Session) AddContentWithTokens(content *genai.Content, tokens int) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	oldCount := len(s.History)
 	s.History = append(s.History, content)
 	s.tokenCounts = append(s.tokenCounts, tokens)
 	s.totalTokens += tokens
 	s.version++
-	s.notifyChange(oldCount)
+	s.notifyChange(oldCount) // unlocks s.mu
 }
 
 // GetTokenCount returns the cached total token count.

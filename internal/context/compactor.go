@@ -28,11 +28,25 @@ func NewResultCompactor(maxChars int) *ResultCompactor {
 	}
 }
 
+// maxErrorChars is the maximum size for error results. Error results beyond
+// this limit are truncated while preserving the most relevant parts.
+const maxErrorChars = 10000
+
 // Compact compacts a tool result if it exceeds the maximum size.
-// IMPORTANT: Error messages and stack traces are NEVER truncated.
+// Error results are preserved with higher limits but still bounded to prevent
+// excessively large errors from consuming the entire context window.
 func (c *ResultCompactor) Compact(result tools.ToolResult) tools.ToolResult {
-	// NEVER compact error results - preserve full error context
+	// Error results get a higher limit but are still bounded
 	if !result.Success {
+		if len(result.Content) > maxErrorChars {
+			truncated := result.Content[:maxErrorChars]
+			truncated += fmt.Sprintf("\n...[error truncated, showing %d of %d chars]", maxErrorChars, len(result.Content))
+			return tools.ToolResult{
+				Content: truncated,
+				Data:    result.Data,
+				Success: false,
+			}
+		}
 		return result
 	}
 

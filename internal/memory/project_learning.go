@@ -95,16 +95,16 @@ func NewProjectLearning(projectRoot string) (*ProjectLearning, error) {
 			pl.timer.Stop()
 		}
 		pl.timer = time.AfterFunc(2*time.Second, func() {
-			pl.mu.RLock()
-			dirty := pl.dirty
-			pl.mu.RUnlock()
-
-			if dirty {
-				pl.mu.Lock()
-				_ = pl.save()
-				pl.dirty = false
+			pl.mu.Lock()
+			if !pl.dirty {
 				pl.mu.Unlock()
+				return
 			}
+			err := pl.save()
+			if err == nil {
+				pl.dirty = false
+			}
+			pl.mu.Unlock()
 		})
 	}
 
@@ -447,8 +447,16 @@ func (pl *ProjectLearning) getSuccessfulCommandsInternal(minRate float64, limit 
 	return result
 }
 
-// Flush forces an immediate save.
+// Flush cancels any pending debounced save and forces an immediate save.
 func (pl *ProjectLearning) Flush() error {
+	// Cancel pending debounced save
+	pl.timerMu.Lock()
+	if pl.timer != nil {
+		pl.timer.Stop()
+		pl.timer = nil
+	}
+	pl.timerMu.Unlock()
+
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
 
