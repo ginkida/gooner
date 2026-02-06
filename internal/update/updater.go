@@ -68,7 +68,7 @@ func NewUpdater(config *Config, currentVersion string) (*Updater, error) {
 // CheckForUpdate checks if an update is available.
 func (u *Updater) CheckForUpdate(ctx context.Context) (*UpdateInfo, error) {
 	if !u.config.Enabled {
-		return nil, ErrNoUpdate
+		return nil, ErrUpdateDisabled
 	}
 
 	u.mu.Lock()
@@ -135,6 +135,9 @@ func (u *Updater) CheckForUpdateIfDue(ctx context.Context) (*UpdateInfo, error) 
 				NewVersion:     cache.LatestVersion,
 				ReleaseNotes:   cache.ReleaseNotes,
 				ReleaseURL:     cache.ReleaseURL,
+				AssetURL:       cache.AssetURL,
+				AssetName:      cache.AssetName,
+				PublishedAt:    cache.PublishedAt,
 			}, nil
 		}
 		return nil, ErrNoUpdate
@@ -297,6 +300,9 @@ func (u *Updater) saveCache() {
 		UpdateAvailable: true,
 		ReleaseNotes:    u.cachedInfo.ReleaseNotes,
 		ReleaseURL:      u.cachedInfo.ReleaseURL,
+		AssetURL:        u.cachedInfo.AssetURL,
+		AssetName:       u.cachedInfo.AssetName,
+		PublishedAt:     u.cachedInfo.PublishedAt,
 	}
 
 	u.checker.SaveCache(cache)

@@ -46,7 +46,6 @@ func (a *Asset) DownloadURL() string {
 
 // UpdateInfo contains information about an available update.
 type UpdateInfo struct {
-	Available      bool
 	CurrentVersion string
 	NewVersion     string
 	ReleaseNotes   string
@@ -137,6 +136,9 @@ type UpdateCache struct {
 	UpdateAvailable bool         `json:"update_available"`
 	ReleaseNotes    string       `json:"release_notes,omitempty"`
 	ReleaseURL      string       `json:"release_url,omitempty"`
+	AssetURL        string       `json:"asset_url,omitempty"`
+	AssetName       string       `json:"asset_name,omitempty"`
+	PublishedAt     time.Time    `json:"published_at,omitempty"`
 	ReleaseInfo     *ReleaseInfo `json:"release_info,omitempty"`
 	Error           string       `json:"error,omitempty"`
 }

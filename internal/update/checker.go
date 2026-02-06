@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -27,7 +28,10 @@ func NewChecker(config *Config, cacheDir string) *Checker {
 
 	// Set proxy if configured
 	if config.Proxy != "" {
-		// Proxy configuration would be set here
+		proxyURL, err := url.Parse(config.Proxy)
+		if err == nil {
+			transport.Proxy = http.ProxyURL(proxyURL)
+		}
 	}
 
 	client := &http.Client{
@@ -183,7 +187,7 @@ func (c *Checker) FindAssetForPlatform(release *ReleaseInfo) *Asset {
 	// Try exact match first
 	for i := range release.Assets {
 		asset := &release.Assets[i]
-		if strings.Contains(strings.ToLower(asset.Name), strings.ToLower(pattern)) {
+		if strings.EqualFold(stripArchiveExtensions(asset.Name), pattern) {
 			return asset
 		}
 	}
@@ -193,7 +197,7 @@ func (c *Checker) FindAssetForPlatform(release *ReleaseInfo) *Asset {
 	for _, alt := range alternatives {
 		for i := range release.Assets {
 			asset := &release.Assets[i]
-			if strings.Contains(strings.ToLower(asset.Name), strings.ToLower(alt)) {
+			if strings.EqualFold(stripArchiveExtensions(asset.Name), alt) {
 				return asset
 			}
 		}
@@ -295,6 +299,17 @@ func (c *Checker) SaveCache(cache *UpdateCache) error {
 // getCachePath returns the path to the cache file.
 func (c *Checker) getCachePath() string {
 	return filepath.Join(c.cacheDir, "update_cache.json")
+}
+
+// stripArchiveExtensions removes known archive extensions from a filename.
+func stripArchiveExtensions(name string) string {
+	lower := strings.ToLower(name)
+	for _, ext := range []string{".tar.gz", ".tgz", ".zip", ".exe"} {
+		if strings.HasSuffix(lower, ext) {
+			return name[:len(name)-len(ext)]
+		}
+	}
+	return name
 }
 
 // IsCacheValid returns true if cached data is still valid.

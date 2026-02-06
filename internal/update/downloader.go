@@ -230,7 +230,7 @@ func (d *Downloader) extractTarGz(archivePath, binaryName string) (string, error
 
 		// Look for the binary
 		baseName := filepath.Base(header.Name)
-		if baseName == binaryName || baseName == binaryName+".exe" || strings.HasPrefix(baseName, "gokin") {
+		if baseName == binaryName || baseName == binaryName+".exe" {
 			if header.Typeflag == tar.TypeReg {
 				// Extract to temp file
 				outPath := filepath.Join(d.tempDir, baseName)
@@ -263,7 +263,7 @@ func (d *Downloader) extractZip(archivePath, binaryName string) (string, error) 
 
 	for _, f := range r.File {
 		baseName := filepath.Base(f.Name)
-		if baseName == binaryName || baseName == binaryName+".exe" || strings.HasPrefix(baseName, "gokin") {
+		if baseName == binaryName || baseName == binaryName+".exe" {
 			if !f.FileInfo().IsDir() {
 				rc, err := f.Open()
 				if err != nil {

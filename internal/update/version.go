@@ -221,22 +221,3 @@ func NormalizeVersion(s string) string {
 	}
 	return s
 }
-
-// prereleaseWeight returns a weight for prerelease comparison.
-// Lower weights have higher precedence in sorting (appear earlier).
-func prereleaseWeight(prerelease string) int {
-	prerelease = strings.ToLower(prerelease)
-
-	switch {
-	case strings.HasPrefix(prerelease, "alpha"):
-		return 1
-	case strings.HasPrefix(prerelease, "beta"):
-		return 2
-	case strings.HasPrefix(prerelease, "rc"):
-		return 3
-	case prerelease == "":
-		return 100 // Stable releases come last (highest)
-	default:
-		return 50 // Unknown prereleases
-	}
-}

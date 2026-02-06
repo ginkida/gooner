@@ -376,6 +376,7 @@ type UpdateConfig struct {
 	MaxBackups        int           `yaml:"max_backups"`        // Max backup versions to keep
 	VerifyChecksum    bool          `yaml:"verify_checksum"`    // Verify downloaded file checksums
 	NotifyOnly        bool          `yaml:"notify_only"`        // Only notify, don't prompt to install
+	Timeout           time.Duration `yaml:"timeout"`            // HTTP request timeout (default: 30s)
 }
 
 // DefaultConfig returns the default configuration.
@@ -529,16 +530,17 @@ func DefaultConfig() *Config {
 			Servers: []MCPServerConfig{},
 		},
 		Update: UpdateConfig{
-			Enabled:           true,           // Enabled by default
-			AutoCheck:         true,           // Check on startup
-			CheckInterval:     24 * time.Hour, // Check once per day
-			AutoDownload:      false,          // Require manual download
-			IncludePrerelease: false,          // Only stable releases
-			Channel:           "stable",       // Stable channel
-			GitHubRepo:        "user/gokin",   // Should be updated to actual repo
-			MaxBackups:        3,              // Keep 3 backups
-			VerifyChecksum:    true,           // Always verify checksums
-			NotifyOnly:        false,          // Allow prompting for install
+			Enabled:           true,              // Enabled by default
+			AutoCheck:         true,              // Check on startup
+			CheckInterval:     24 * time.Hour,    // Check once per day
+			AutoDownload:      false,             // Require manual download
+			IncludePrerelease: false,             // Only stable releases
+			Channel:           "stable",          // Stable channel
+			GitHubRepo:        "user/gokin",      // Should be updated to actual repo
+			MaxBackups:        3,                 // Keep 3 backups
+			VerifyChecksum:    true,              // Always verify checksums
+			NotifyOnly:        false,             // Allow prompting for install
+			Timeout:           30 * time.Second,  // HTTP request timeout
 		},
 	}
 }

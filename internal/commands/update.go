@@ -83,7 +83,7 @@ func (c *UpdateCommand) checkForUpdate(ctx context.Context, updater *update.Upda
 		if err == update.ErrSameVersion {
 			return fmt.Sprintf("✓ You are running the latest version (%s).", currentVersion), nil
 		}
-		if err == update.ErrNoUpdate {
+		if err == update.ErrUpdateDisabled {
 			return "Updates are currently disabled in configuration.", nil
 		}
 		return fmt.Sprintf("Failed to check for updates: %v", err), nil
@@ -123,6 +123,9 @@ func (c *UpdateCommand) installUpdate(ctx context.Context, updater *update.Updat
 	if err != nil {
 		if err == update.ErrSameVersion {
 			return fmt.Sprintf("✓ You are already running the latest version (%s).", currentVersion), nil
+		}
+		if err == update.ErrUpdateDisabled {
+			return "Updates are currently disabled in configuration.", nil
 		}
 		return fmt.Sprintf("Update failed: %v\n\nLast status: %s", err, lastMessage), nil
 	}

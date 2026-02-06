@@ -7,6 +7,9 @@ var (
 	// ErrNoUpdate indicates no update is available.
 	ErrNoUpdate = errors.New("no update available")
 
+	// ErrUpdateDisabled indicates the update system is disabled.
+	ErrUpdateDisabled = errors.New("update system is disabled")
+
 	// ErrNoReleases indicates no releases were found.
 	ErrNoReleases = errors.New("no releases found")
 

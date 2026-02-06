@@ -54,6 +54,10 @@ func newUpdateCheckCmd() *cobra.Command {
 					fmt.Printf("You are running the latest version (%s)\n", version)
 					return nil
 				}
+				if err == update.ErrUpdateDisabled {
+					fmt.Println("Update system is disabled in configuration.")
+					return nil
+				}
 				return fmt.Errorf("failed to check for updates: %w", err)
 			}
 
@@ -97,19 +101,19 @@ func newUpdateInstallCmd() *cobra.Command {
 			progress := func(p *update.UpdateProgress) {
 				switch p.Status {
 				case update.StatusChecking:
-					fmt.Printf("\r%s...", p.Message)
+					fmt.Printf("\r%-60s", p.Message+"...")
 				case update.StatusDownloading:
 					if p.TotalBytes > 0 {
-						fmt.Printf("\rDownloading: %.1f%% (%d/%d bytes)", p.Percent, p.BytesDownloaded, p.TotalBytes)
+						fmt.Printf("\rDownloading: %.1f%% (%d/%d bytes)          ", p.Percent, p.BytesDownloaded, p.TotalBytes)
 					} else {
-						fmt.Printf("\rDownloading: %d bytes", p.BytesDownloaded)
+						fmt.Printf("\rDownloading: %d bytes          ", p.BytesDownloaded)
 					}
 				case update.StatusVerifying:
-					fmt.Printf("\r%s                              \n", p.Message)
+					fmt.Printf("\n%s\n", p.Message)
 				case update.StatusInstalling:
-					fmt.Printf("\r%s                              \n", p.Message)
+					fmt.Printf("%s\n", p.Message)
 				case update.StatusComplete:
-					fmt.Printf("\r%s                              \n", p.Message)
+					fmt.Printf("%s\n", p.Message)
 				}
 			}
 
@@ -117,6 +121,10 @@ func newUpdateInstallCmd() *cobra.Command {
 			if err != nil {
 				if err == update.ErrSameVersion && !forceUpdate {
 					fmt.Printf("\nYou are already running the latest version (%s)\n", version)
+					return nil
+				}
+				if err == update.ErrUpdateDisabled {
+					fmt.Println("\nUpdate system is disabled in configuration.")
 					return nil
 				}
 				return fmt.Errorf("update failed: %w", err)
@@ -221,6 +229,11 @@ func newUpdateListBackupsCmd() *cobra.Command {
 
 // convertConfig converts config.UpdateConfig to update.Config.
 func convertConfig(cfg *config.UpdateConfig) *update.Config {
+	timeout := cfg.Timeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+
 	return &update.Config{
 		Enabled:           cfg.Enabled,
 		AutoCheck:         cfg.AutoCheck,
@@ -232,7 +245,7 @@ func convertConfig(cfg *config.UpdateConfig) *update.Config {
 		MaxBackups:        cfg.MaxBackups,
 		VerifyChecksum:    cfg.VerifyChecksum,
 		NotifyOnly:        cfg.NotifyOnly,
-		Timeout:           30 * time.Second,
+		Timeout:           timeout,
 	}
 }
 

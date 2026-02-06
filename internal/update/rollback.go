@@ -1,6 +1,8 @@
 package update
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,6 +46,18 @@ func (rm *RollbackManager) CreateBackup(binaryPath string, version string) (*Bac
 		return nil, fmt.Errorf("failed to copy binary: %w", err)
 	}
 
+	// Get file size
+	stat, err := os.Stat(backupPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat backup: %w", err)
+	}
+
+	// Compute checksum
+	checksum, err := computeFileChecksum(backupPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute checksum: %w", err)
+	}
+
 	// Create backup info
 	info := &BackupInfo{
 		ID:         backupID,
@@ -51,6 +65,8 @@ func (rm *RollbackManager) CreateBackup(binaryPath string, version string) (*Bac
 		Path:       backupPath,
 		CreatedAt:  time.Now(),
 		BinaryPath: binaryPath,
+		Size:       stat.Size(),
+		Checksum:   checksum,
 	}
 
 	// Save backup info
@@ -289,4 +305,20 @@ func (rm *RollbackManager) DeleteBackup(backup *BackupInfo) error {
 // GetBackupDir returns the backup directory path.
 func (rm *RollbackManager) GetBackupDir() string {
 	return rm.backupDir
+}
+
+// computeFileChecksum computes the SHA256 checksum of a file.
+func computeFileChecksum(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
