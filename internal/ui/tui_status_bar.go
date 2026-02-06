@@ -103,10 +103,25 @@ func (m Model) renderStatusBarCompact() string {
 		leftParts = append(leftParts, modelStyle.Render(shortenModelName(m.currentModel)))
 	}
 
+	// Conversation mode (compact)
+	if m.conversationMode != "" {
+		modeStyle := lipgloss.NewStyle().Foreground(ColorInfo)
+		leftParts = append(leftParts, modeStyle.Render("["+m.conversationMode+"]"))
+	}
+
 	var rightParts []string
 
 	// Token usage (compact %)
-	if m.showTokens && m.tokenUsage != nil {
+	if m.tokenUsagePercent > 0 {
+		usageColor := ColorMuted
+		if m.tokenUsagePercent > 80 {
+			usageColor = ColorError
+		} else if m.tokenUsagePercent > 50 {
+			usageColor = ColorWarning
+		}
+		usageStyle := lipgloss.NewStyle().Foreground(usageColor)
+		rightParts = append(rightParts, usageStyle.Render(fmt.Sprintf("Tokens: %.0f%%", m.tokenUsagePercent)))
+	} else if m.showTokens && m.tokenUsage != nil {
 		usageColor := ColorMuted
 		if m.tokenUsage.PercentUsed > 0.8 {
 			usageColor = ColorError
@@ -178,10 +193,41 @@ func (m Model) renderStatusBarMedium() string {
 		leftParts = append(leftParts, gitStyle.Render(branch))
 	}
 
+	// Conversation mode
+	if m.conversationMode != "" {
+		modeStyle := lipgloss.NewStyle().Foreground(ColorInfo)
+		leftParts = append(leftParts, modeStyle.Render("["+m.conversationMode+"]"))
+	}
+
+	// MCP health
+	if m.mcpTotal > 0 {
+		mcpColor := ColorMuted
+		if m.mcpHealthy < m.mcpTotal {
+			mcpColor = ColorWarning
+		}
+		mcpStyle := lipgloss.NewStyle().Foreground(mcpColor)
+		leftParts = append(leftParts, mcpStyle.Render(fmt.Sprintf("MCP: %d/%d", m.mcpHealthy, m.mcpTotal)))
+	}
+
+	// Memory count
+	if m.injectedContextCount > 0 {
+		memStyle := lipgloss.NewStyle().Foreground(ColorMuted)
+		leftParts = append(leftParts, memStyle.Render(fmt.Sprintf("Mem: %d", m.injectedContextCount)))
+	}
+
 	var rightParts []string
 
 	// Token usage
-	if m.showTokens && m.tokenUsage != nil {
+	if m.tokenUsagePercent > 0 {
+		usageColor := ColorMuted
+		if m.tokenUsagePercent > 80 {
+			usageColor = ColorError
+		} else if m.tokenUsagePercent > 50 {
+			usageColor = ColorWarning
+		}
+		usageStyle := lipgloss.NewStyle().Foreground(usageColor)
+		rightParts = append(rightParts, usageStyle.Render(fmt.Sprintf("Tokens: %.0f%%", m.tokenUsagePercent)))
+	} else if m.showTokens && m.tokenUsage != nil {
 		usageColor := ColorMuted
 		if m.tokenUsage.PercentUsed > 0.8 {
 			usageColor = ColorError
@@ -189,7 +235,7 @@ func (m Model) renderStatusBarMedium() string {
 			usageColor = ColorWarning
 		}
 		usageStyle := lipgloss.NewStyle().Foreground(usageColor)
-		rightParts = append(rightParts, usageStyle.Render(fmt.Sprintf("%.0f%%", m.tokenUsage.PercentUsed*100)))
+		rightParts = append(rightParts, usageStyle.Render(fmt.Sprintf("Tokens: %.0f%%", m.tokenUsage.PercentUsed*100)))
 	}
 
 	// Time
@@ -252,8 +298,42 @@ func (m Model) renderStatusBarFull() string {
 
 	var rightParts []string
 
-	// Token usage with bar
-	if m.showTokens && m.tokenUsage != nil {
+	// Conversation mode
+	if m.conversationMode != "" {
+		modeStyle := lipgloss.NewStyle().Foreground(ColorInfo)
+		leftParts = append(leftParts, modeStyle.Render("["+m.conversationMode+"]"))
+	}
+
+	// MCP health
+	if m.mcpTotal > 0 {
+		mcpColor := ColorSuccess
+		if m.mcpHealthy < m.mcpTotal {
+			mcpColor = ColorWarning
+		}
+		if m.mcpHealthy == 0 {
+			mcpColor = ColorError
+		}
+		mcpStyle := lipgloss.NewStyle().Foreground(mcpColor)
+		leftParts = append(leftParts, mcpStyle.Render(fmt.Sprintf("MCP: %d/%d", m.mcpHealthy, m.mcpTotal)))
+	}
+
+	// Memory count
+	if m.injectedContextCount > 0 {
+		memStyle := lipgloss.NewStyle().Foreground(ColorMuted)
+		leftParts = append(leftParts, memStyle.Render(fmt.Sprintf("Mem: %d", m.injectedContextCount)))
+	}
+
+	// Token usage with percentage
+	if m.tokenUsagePercent > 0 {
+		usageColor := ColorSuccess
+		if m.tokenUsagePercent > 80 {
+			usageColor = ColorError
+		} else if m.tokenUsagePercent > 50 {
+			usageColor = ColorWarning
+		}
+		usageStyle := lipgloss.NewStyle().Foreground(usageColor)
+		rightParts = append(rightParts, usageStyle.Render(fmt.Sprintf("Tokens: %.0f%%", m.tokenUsagePercent)))
+	} else if m.showTokens && m.tokenUsage != nil {
 		usageColor := ColorSuccess
 		if m.tokenUsage.PercentUsed > 0.8 {
 			usageColor = ColorError
@@ -261,7 +341,7 @@ func (m Model) renderStatusBarFull() string {
 			usageColor = ColorWarning
 		}
 		usageStyle := lipgloss.NewStyle().Foreground(usageColor)
-		rightParts = append(rightParts, usageStyle.Render(fmt.Sprintf("%.0f%%", m.tokenUsage.PercentUsed*100)))
+		rightParts = append(rightParts, usageStyle.Render(fmt.Sprintf("Tokens: %.0f%%", m.tokenUsage.PercentUsed*100)))
 	}
 
 	// Session time

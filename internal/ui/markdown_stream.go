@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
+	"github.com/charmbracelet/lipgloss"
 	"gokin/internal/highlight"
 )
 
@@ -25,16 +27,43 @@ type MarkdownStreamParser struct {
 	codeFilename string
 	codeContent  strings.Builder
 	styles       *Styles
+
+	// Table buffering state: accumulate consecutive table lines before rendering
+	inTable   bool
+	tableRows []string
+
+	// Inline code style (computed once from styles)
+	inlineCodeStyle lipgloss.Style
 }
 
 // codeBlockStartRegex matches code block start: ```lang or ```lang:filename
 var codeBlockStartRegex = regexp.MustCompile("^```(\\w*)(?::(.+))?$")
+
+// inlineCodeRegex matches single backtick-wrapped inline code: `code`
+// It avoids matching double backticks (which start code blocks).
+var inlineCodeRegex = regexp.MustCompile("`([^`]+)`")
+
+// unorderedListRegex matches unordered list items with leading whitespace: "  - item" or "  * item"
+var unorderedListRegex = regexp.MustCompile(`^(\s*)([-*])\s+(.+)$`)
+
+// orderedListRegex matches ordered list items with leading whitespace: "  1. item"
+var orderedListRegex = regexp.MustCompile(`^(\s*)(\d+)\.\s+(.+)$`)
+
+// tableRowRegex matches a markdown table row containing pipe separators.
+var tableRowRegex = regexp.MustCompile(`^\s*\|.*\|\s*$`)
+
+// tableSeparatorRegex matches a markdown table separator row: | --- | --- |
+var tableSeparatorRegex = regexp.MustCompile(`^\s*\|[\s\-:|]+\|\s*$`)
 
 // NewMarkdownStreamParser creates a new streaming markdown parser.
 func NewMarkdownStreamParser(styles *Styles) *MarkdownStreamParser {
 	return &MarkdownStreamParser{
 		highlighter: highlight.New("monokai"),
 		styles:      styles,
+		inlineCodeStyle: lipgloss.NewStyle().
+			Background(lipgloss.Color("#2D2D2D")).
+			Foreground(lipgloss.Color("#E06C75")).
+			Padding(0, 1),
 	}
 }
 
@@ -99,18 +128,39 @@ func (p *MarkdownStreamParser) Feed(chunk string) []RenderedBlock {
 			// Check for code block start
 			trimmed := strings.TrimSpace(line)
 			if matches := codeBlockStartRegex.FindStringSubmatch(trimmed); matches != nil {
+				// Flush any buffered table before entering code block
+				if p.inTable {
+					blocks = append(blocks, p.flushTable()...)
+				}
 				p.inCodeBlock = true
 				p.codeLanguage = matches[1]
 				if len(matches) > 2 {
 					p.codeFilename = matches[2]
 				}
 				p.codeContent.Reset()
+			} else if tableRowRegex.MatchString(line) {
+				// Accumulate table rows
+				p.inTable = true
+				p.tableRows = append(p.tableRows, line)
 			} else {
-				// Regular text
-				blocks = append(blocks, RenderedBlock{
-					Content: line + "\n",
-					IsCode:  false,
-				})
+				// Non-table line: flush any buffered table first
+				if p.inTable {
+					blocks = append(blocks, p.flushTable()...)
+				}
+
+				// Check for list items
+				if rendered, ok := p.renderListItem(line); ok {
+					blocks = append(blocks, RenderedBlock{
+						Content: rendered + "\n",
+						IsCode:  false,
+					})
+				} else {
+					// Regular text with inline code styling
+					blocks = append(blocks, RenderedBlock{
+						Content: p.renderInlineCode(line) + "\n",
+						IsCode:  false,
+					})
+				}
 			}
 		}
 	}
@@ -129,6 +179,11 @@ func (p *MarkdownStreamParser) Feed(chunk string) []RenderedBlock {
 // Flush returns any remaining content in the buffer.
 func (p *MarkdownStreamParser) Flush() []RenderedBlock {
 	var blocks []RenderedBlock
+
+	// Flush any buffered table
+	if p.inTable {
+		blocks = append(blocks, p.flushTable()...)
+	}
 
 	// If we're in a code block, flush it (incomplete but better than nothing)
 	if p.inCodeBlock {
@@ -151,7 +206,7 @@ func (p *MarkdownStreamParser) Flush() []RenderedBlock {
 	remaining := p.buffer.String()
 	if remaining != "" {
 		blocks = append(blocks, RenderedBlock{
-			Content: remaining,
+			Content: p.renderInlineCode(remaining),
 			IsCode:  false,
 		})
 		p.buffer.Reset()
@@ -167,6 +222,8 @@ func (p *MarkdownStreamParser) Reset() {
 	p.codeLanguage = ""
 	p.codeFilename = ""
 	p.codeContent.Reset()
+	p.inTable = false
+	p.tableRows = nil
 }
 
 // RenderCodeBlock renders a code block with syntax highlighting and optional header.
@@ -284,6 +341,269 @@ func (p *MarkdownStreamParser) renderCodeBlockWithBorder(filename, lang, content
 	// Bottom border (rounded corners)
 	result.WriteString(p.styles.Dim.Render("╰" + strings.Repeat("─", contentWidth+2) + "╯"))
 	result.WriteString("\n")
+
+	return result.String()
+}
+
+// renderInlineCode detects backtick-wrapped `code` segments within a text line
+// and applies a distinct background color + monospace style using lipgloss.
+// Double/triple backticks are not matched (those are code block fences).
+func (p *MarkdownStreamParser) renderInlineCode(line string) string {
+	if !strings.Contains(line, "`") {
+		return line
+	}
+
+	var result strings.Builder
+	remaining := line
+
+	for {
+		loc := inlineCodeRegex.FindStringIndex(remaining)
+		if loc == nil {
+			result.WriteString(remaining)
+			break
+		}
+
+		// Write text before the match
+		result.WriteString(remaining[:loc[0]])
+
+		// Extract the matched segment and the inner code text
+		matched := remaining[loc[0]:loc[1]]
+		// Strip the surrounding backticks to get inner text
+		inner := matched[1 : len(matched)-1]
+
+		// Apply inline code style
+		result.WriteString(p.inlineCodeStyle.Render(inner))
+
+		// Advance past the match
+		remaining = remaining[loc[1]:]
+	}
+
+	return result.String()
+}
+
+// renderListItem detects unordered (-, *) and ordered (1.) list items,
+// calculates nesting depth from leading whitespace, and renders with
+// proper indentation and bullet/number styling.
+// Returns the rendered string and true if the line is a list item, or ("", false) otherwise.
+func (p *MarkdownStreamParser) renderListItem(line string) (string, bool) {
+	bulletStyle := lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true)
+	numberStyle := lipgloss.NewStyle().Foreground(ColorAccent).Bold(true)
+
+	// Check for unordered list: "  - item" or "  * item"
+	if matches := unorderedListRegex.FindStringSubmatch(line); matches != nil {
+		indent := matches[1]
+		content := matches[3]
+		depth := listDepth(indent)
+
+		// Build indentation: 2 spaces per depth level
+		prefix := strings.Repeat("  ", depth)
+
+		// Use different bullet characters per depth level
+		bullets := []string{"●", "○", "■", "□", "◆", "◇"}
+		bullet := bullets[depth%len(bullets)]
+
+		rendered := prefix + bulletStyle.Render(bullet) + " " + p.renderInlineCode(content)
+		return rendered, true
+	}
+
+	// Check for ordered list: "  1. item"
+	if matches := orderedListRegex.FindStringSubmatch(line); matches != nil {
+		indent := matches[1]
+		num := matches[2]
+		content := matches[3]
+		depth := listDepth(indent)
+
+		// Build indentation: 2 spaces per depth level
+		prefix := strings.Repeat("  ", depth)
+
+		rendered := prefix + numberStyle.Render(num+".") + " " + p.renderInlineCode(content)
+		return rendered, true
+	}
+
+	return "", false
+}
+
+// listDepth calculates the nesting depth from leading whitespace.
+// Each 2 spaces (or 1 tab) equals one level of depth.
+func listDepth(indent string) int {
+	spaces := 0
+	for _, ch := range indent {
+		if ch == '\t' {
+			spaces += 2
+		} else {
+			spaces++
+		}
+	}
+	return spaces / 2
+}
+
+// flushTable renders all buffered table rows as a formatted table block
+// and resets the table state. Returns rendered blocks.
+func (p *MarkdownStreamParser) flushTable() []RenderedBlock {
+	if len(p.tableRows) == 0 {
+		p.inTable = false
+		return nil
+	}
+
+	rows := p.tableRows
+	p.tableRows = nil
+	p.inTable = false
+
+	rendered := p.renderTable(rows)
+	return []RenderedBlock{
+		{
+			Content: rendered + "\n",
+			IsCode:  false,
+		},
+	}
+}
+
+// renderTable parses markdown table rows and renders them with aligned columns
+// and box-drawing border characters.
+func (p *MarkdownStreamParser) renderTable(rows []string) string {
+	if len(rows) == 0 {
+		return ""
+	}
+
+	// Parse all rows into cells
+	type parsedRow struct {
+		cells       []string
+		isSeparator bool
+	}
+
+	var parsed []parsedRow
+	for _, row := range rows {
+		trimmed := strings.TrimSpace(row)
+		isSep := tableSeparatorRegex.MatchString(row)
+
+		// Split on | and trim the outer empty cells
+		parts := strings.Split(trimmed, "|")
+		var cells []string
+		for i, part := range parts {
+			// Skip empty leading/trailing parts from outer pipes
+			if (i == 0 || i == len(parts)-1) && strings.TrimSpace(part) == "" {
+				continue
+			}
+			cells = append(cells, strings.TrimSpace(part))
+		}
+
+		parsed = append(parsed, parsedRow{cells: cells, isSeparator: isSep})
+	}
+
+	if len(parsed) == 0 {
+		return strings.Join(rows, "\n")
+	}
+
+	// Determine column count and max widths
+	maxCols := 0
+	for _, r := range parsed {
+		if len(r.cells) > maxCols {
+			maxCols = len(r.cells)
+		}
+	}
+	if maxCols == 0 {
+		return strings.Join(rows, "\n")
+	}
+
+	// Calculate the max visible width for each column
+	colWidths := make([]int, maxCols)
+	for _, r := range parsed {
+		if r.isSeparator {
+			continue
+		}
+		for j, cell := range r.cells {
+			w := utf8.RuneCountInString(cell)
+			if w > colWidths[j] {
+				colWidths[j] = w
+			}
+		}
+	}
+
+	// Ensure minimum column width of 3
+	for j := range colWidths {
+		if colWidths[j] < 3 {
+			colWidths[j] = 3
+		}
+	}
+
+	borderStyle := p.styles.Dim
+	headerStyle := lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true)
+
+	var result strings.Builder
+
+	// Top border: ╭───┬───┬───╮
+	result.WriteString(borderStyle.Render("╭"))
+	for j, w := range colWidths {
+		result.WriteString(borderStyle.Render(strings.Repeat("─", w+2)))
+		if j < maxCols-1 {
+			result.WriteString(borderStyle.Render("┬"))
+		}
+	}
+	result.WriteString(borderStyle.Render("╮"))
+	result.WriteString("\n")
+
+	// Render each row
+	isHeader := true // First non-separator row is the header
+	for _, r := range parsed {
+		if r.isSeparator {
+			// Separator row: ├───┼───┼───┤
+			result.WriteString(borderStyle.Render("├"))
+			for j, w := range colWidths {
+				result.WriteString(borderStyle.Render(strings.Repeat("─", w+2)))
+				if j < maxCols-1 {
+					result.WriteString(borderStyle.Render("┼"))
+				}
+			}
+			result.WriteString(borderStyle.Render("┤"))
+			result.WriteString("\n")
+			isHeader = false
+			continue
+		}
+
+		// Data row: │ cell │ cell │ cell │
+		result.WriteString(borderStyle.Render("│"))
+		for j := 0; j < maxCols; j++ {
+			cell := ""
+			if j < len(r.cells) {
+				cell = r.cells[j]
+			}
+
+			// Pad cell to column width
+			cellWidth := utf8.RuneCountInString(cell)
+			padding := colWidths[j] - cellWidth
+			if padding < 0 {
+				padding = 0
+			}
+
+			var styledCell string
+			if isHeader {
+				styledCell = headerStyle.Render(cell)
+			} else {
+				styledCell = p.renderInlineCode(cell)
+			}
+
+			result.WriteString(" ")
+			result.WriteString(styledCell)
+			result.WriteString(strings.Repeat(" ", padding))
+			result.WriteString(" ")
+
+			if j < maxCols-1 {
+				result.WriteString(borderStyle.Render("│"))
+			}
+		}
+		result.WriteString(borderStyle.Render("│"))
+		result.WriteString("\n")
+	}
+
+	// Bottom border: ╰───┴───┴───╯
+	result.WriteString(borderStyle.Render("╰"))
+	for j, w := range colWidths {
+		result.WriteString(borderStyle.Render(strings.Repeat("─", w+2)))
+		if j < maxCols-1 {
+			result.WriteString(borderStyle.Render("┴"))
+		}
+	}
+	result.WriteString(borderStyle.Render("╯"))
 
 	return result.String()
 }

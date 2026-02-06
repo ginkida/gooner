@@ -461,12 +461,14 @@ type PlanManagerProvider interface {
 
 // PromptBuilder builds dynamic system prompts.
 type PromptBuilder struct {
-	workDir        string
-	projectInfo    *ProjectInfo
-	projectMemory  *ProjectMemory
-	memoryStore    MemoryProvider
-	planAutoDetect bool
-	planManager    PlanManagerProvider
+	workDir         string
+	projectInfo     *ProjectInfo
+	projectMemory   *ProjectMemory
+	memoryStore     MemoryProvider
+	planAutoDetect  bool
+	planManager     PlanManagerProvider
+	detectedContext string // Auto-detected project context (frameworks, docs, etc.)
+	toolHints       string // Tool usage pattern hints
 }
 
 // NewPromptBuilder creates a new prompt builder.
@@ -495,6 +497,16 @@ func (b *PromptBuilder) SetPlanAutoDetect(enabled bool) {
 // SetPlanManager sets the plan manager for contract context injection.
 func (b *PromptBuilder) SetPlanManager(pm PlanManagerProvider) {
 	b.planManager = pm
+}
+
+// SetDetectedContext sets the auto-detected project context (frameworks, docs summaries).
+func (b *PromptBuilder) SetDetectedContext(ctx string) {
+	b.detectedContext = ctx
+}
+
+// SetToolHints sets the tool usage pattern hints for periodic injection.
+func (b *PromptBuilder) SetToolHints(hints string) {
+	b.toolHints = hints
 }
 
 // Build constructs the full system prompt.
@@ -532,6 +544,18 @@ func (b *PromptBuilder) Build() string {
 	// Add project context if available
 	if b.projectInfo != nil && b.projectInfo.Name != "" {
 		builder.WriteString(fmt.Sprintf("\nProject name: %s", b.projectInfo.Name))
+	}
+
+	// Inject auto-detected project context (frameworks, doc summaries, dependencies)
+	if b.detectedContext != "" {
+		builder.WriteString("\n\n## Detected Project Context\n")
+		builder.WriteString(b.detectedContext)
+	}
+
+	// Inject tool usage pattern hints (populated periodically)
+	if b.toolHints != "" {
+		builder.WriteString("\n\n## Tool Usage Hints\n")
+		builder.WriteString(b.toolHints)
 	}
 
 	// Add plan mode instructions (conditional on auto-detect)

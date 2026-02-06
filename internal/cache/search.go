@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -31,17 +32,89 @@ type GlobResult struct {
 
 // SearchCache provides caching for grep and glob operations.
 type SearchCache struct {
-	grepCache *LRUCache[string, GrepResult]
-	globCache *LRUCache[string, GlobResult]
-	enabled   bool
+	grepCache   *LRUCache[string, GrepResult]
+	globCache   *LRUCache[string, GlobResult]
+	fileToKeys  map[string]map[string]bool // file path -> set of cache keys
+	keyToFiles  map[string]map[string]bool // cache key -> set of file paths
+	indexMu     sync.RWMutex
+	enabled     bool
+	cleanupDone chan struct{}
 }
 
 // NewSearchCache creates a new search cache with the given capacity and TTL.
 func NewSearchCache(capacity int, ttl time.Duration) *SearchCache {
-	return &SearchCache{
-		grepCache: NewLRUCache[string, GrepResult](capacity, ttl),
-		globCache: NewLRUCache[string, GlobResult](capacity, ttl),
-		enabled:   true,
+	sc := &SearchCache{
+		grepCache:   NewLRUCache[string, GrepResult](capacity, ttl),
+		globCache:   NewLRUCache[string, GlobResult](capacity, ttl),
+		fileToKeys:  make(map[string]map[string]bool),
+		keyToFiles:  make(map[string]map[string]bool),
+		enabled:     true,
+		cleanupDone: make(chan struct{}),
+	}
+	go sc.backgroundCleanup(ttl)
+	return sc
+}
+
+// backgroundCleanup periodically removes expired entries.
+func (c *SearchCache) backgroundCleanup(ttl time.Duration) {
+	ticker := time.NewTicker(ttl / 2)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.cleanupDone:
+			return
+		case <-ticker.C:
+			c.Cleanup()
+		}
+	}
+}
+
+// StopCleanup stops the background cleanup goroutine.
+func (c *SearchCache) StopCleanup() {
+	select {
+	case <-c.cleanupDone:
+		// Already closed
+	default:
+		close(c.cleanupDone)
+	}
+}
+
+// trackFiles associates a cache key with the files it depends on.
+func (c *SearchCache) trackFiles(key string, files []string) {
+	c.indexMu.Lock()
+	defer c.indexMu.Unlock()
+
+	// Track key -> files
+	if c.keyToFiles[key] == nil {
+		c.keyToFiles[key] = make(map[string]bool)
+	}
+	for _, f := range files {
+		c.keyToFiles[key][f] = true
+
+		// Track file -> keys (reverse index)
+		if c.fileToKeys[f] == nil {
+			c.fileToKeys[f] = make(map[string]bool)
+		}
+		c.fileToKeys[f][key] = true
+	}
+}
+
+// removeKeyFromIndex removes a cache key from the reverse index.
+func (c *SearchCache) removeKeyFromIndex(key string) {
+	c.indexMu.Lock()
+	defer c.indexMu.Unlock()
+
+	if files, ok := c.keyToFiles[key]; ok {
+		for f := range files {
+			if keys, ok := c.fileToKeys[f]; ok {
+				delete(keys, key)
+				if len(keys) == 0 {
+					delete(c.fileToKeys, f)
+				}
+			}
+		}
+		delete(c.keyToFiles, key)
 	}
 }
 
@@ -84,6 +157,17 @@ func (c *SearchCache) SetGrep(key string, result GrepResult) {
 	}
 	result.CachedAt = time.Now()
 	c.grepCache.Set(key, result)
+
+	// Track files in reverse index
+	files := make([]string, 0, len(result.Matches))
+	seen := make(map[string]bool)
+	for _, m := range result.Matches {
+		if !seen[m.FilePath] {
+			seen[m.FilePath] = true
+			files = append(files, m.FilePath)
+		}
+	}
+	c.trackFiles(key, files)
 }
 
 // GetGlob retrieves cached glob results.
@@ -101,6 +185,9 @@ func (c *SearchCache) SetGlob(key string, result GlobResult) {
 	}
 	result.CachedAt = time.Now()
 	c.globCache.Set(key, result)
+
+	// Track files in reverse index
+	c.trackFiles(key, result.Files)
 }
 
 // InvalidateByPath invalidates cache entries that match the given path.
@@ -110,18 +197,25 @@ func (c *SearchCache) InvalidateByPath(path string) {
 		return
 	}
 
-	// Note: In the future, we could implement more targeted invalidation
-	// by tracking which files are included in each cache entry
-	_ = path
+	c.indexMu.RLock()
+	keys, ok := c.fileToKeys[path]
+	if !ok {
+		c.indexMu.RUnlock()
+		return
+	}
+	// Copy keys to avoid holding lock during deletion
+	keyList := make([]string, 0, len(keys))
+	for k := range keys {
+		keyList = append(keyList, k)
+	}
+	c.indexMu.RUnlock()
 
-	// For glob cache, we can't easily determine which entries are affected,
-	// so we clear the entire glob cache when any file changes.
-	// This is conservative but safe.
-	c.globCache.Clear()
-
-	// For grep cache, we also clear everything since grep results
-	// could be affected by any file change.
-	c.grepCache.Clear()
+	// Invalidate each affected cache key
+	for _, key := range keyList {
+		c.grepCache.Delete(key)
+		c.globCache.Delete(key)
+		c.removeKeyFromIndex(key)
+	}
 }
 
 // InvalidateByDir invalidates all cache entries for files in the given directory.
@@ -130,18 +224,33 @@ func (c *SearchCache) InvalidateByDir(dir string) {
 		return
 	}
 
-	// Clear both caches for any directory change
-	// Note: In the future, we could implement more targeted invalidation
-	// by checking if paths start with the given directory
-	_ = dir
-	c.globCache.Clear()
-	c.grepCache.Clear()
+	c.indexMu.RLock()
+	keysToInvalidate := make(map[string]bool)
+	for filePath, keys := range c.fileToKeys {
+		if strings.HasPrefix(filePath, dir) {
+			for k := range keys {
+				keysToInvalidate[k] = true
+			}
+		}
+	}
+	c.indexMu.RUnlock()
+
+	for key := range keysToInvalidate {
+		c.grepCache.Delete(key)
+		c.globCache.Delete(key)
+		c.removeKeyFromIndex(key)
+	}
 }
 
 // Clear clears all cached entries.
 func (c *SearchCache) Clear() {
 	c.grepCache.Clear()
 	c.globCache.Clear()
+
+	c.indexMu.Lock()
+	c.fileToKeys = make(map[string]map[string]bool)
+	c.keyToFiles = make(map[string]map[string]bool)
+	c.indexMu.Unlock()
 }
 
 // Cleanup removes expired entries from both caches.

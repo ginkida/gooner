@@ -40,9 +40,10 @@ type ToolOutputEntry struct {
 
 // ToolOutputModel manages the display of tool output with expand/collapse functionality.
 type ToolOutputModel struct {
-	entries []ToolOutputEntry
-	config  ToolOutputConfig
-	styles  *Styles
+	entries     []ToolOutputEntry
+	config      ToolOutputConfig
+	styles      *Styles
+	AllExpanded bool
 }
 
 // NewToolOutputModel creates a new tool output model.
@@ -108,6 +109,28 @@ func (m *ToolOutputModel) GetEntry(index int) *ToolOutputEntry {
 // ToggleLatest toggles the expand state of the most recent entry.
 func (m *ToolOutputModel) ToggleLatest() bool {
 	return m.ToggleExpand(m.GetLatestIndex())
+}
+
+// ToggleAll toggles all entries between expanded and collapsed.
+func (m *ToolOutputModel) ToggleAll() {
+	m.AllExpanded = !m.AllExpanded
+	for i := range m.entries {
+		m.entries[i].Expanded = m.AllExpanded
+	}
+}
+
+// GetSummary returns a compact summary for the entry at the given index.
+func (m *ToolOutputModel) GetSummary(index int) string {
+	if index < 0 || index >= len(m.entries) {
+		return ""
+	}
+	entry := m.entries[index]
+	lineCount := strings.Count(entry.FullContent, "\n") + 1
+	info := entry.ToolName
+	if entry.FullContent != "" {
+		info += fmt.Sprintf(": %d lines", lineCount)
+	}
+	return fmt.Sprintf("[%s]", info)
 }
 
 // NeedsTruncation checks if the content needs truncation.

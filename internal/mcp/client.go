@@ -35,6 +35,11 @@ type Client struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	done   chan struct{}
+
+	// Reconnection
+	backoff          time.Duration
+	maxBackoff       time.Duration
+	consecutiveFails int
 }
 
 // NewClient creates a new MCP client with the specified transport.
@@ -65,6 +70,8 @@ func NewClient(cfg *ServerConfig) (*Client, error) {
 		ctx:        ctx,
 		cancel:     cancel,
 		done:       make(chan struct{}),
+		backoff:    100 * time.Millisecond,
+		maxBackoff: 30 * time.Second,
 	}
 
 	// Start message receiver goroutine
@@ -87,15 +94,93 @@ func (c *Client) receiveLoop() {
 		msg, err := c.transport.Receive()
 		if err != nil {
 			if c.ctx.Err() != nil {
-				// Context cancelled, expected
 				return
 			}
-			logging.Warn("MCP receive error", "error", err)
-			return
+
+			c.mu.Lock()
+			c.consecutiveFails++
+			fails := c.consecutiveFails
+			c.mu.Unlock()
+
+			logging.Warn("MCP receive error", "error", err, "consecutive_fails", fails)
+
+			// Attempt reconnection with backoff
+			if !c.reconnect() {
+				return
+			}
+			continue
 		}
+
+		// Reset backoff on successful receive
+		c.mu.Lock()
+		c.backoff = 100 * time.Millisecond
+		c.consecutiveFails = 0
+		c.mu.Unlock()
 
 		c.handleMessage(msg)
 	}
+}
+
+// reconnect attempts to recreate the transport with exponential backoff.
+func (c *Client) reconnect() bool {
+	c.mu.Lock()
+	currentBackoff := c.backoff
+	// Exponential backoff: double each time, capped at maxBackoff
+	c.backoff = c.backoff * 2
+	if c.backoff > c.maxBackoff {
+		c.backoff = c.maxBackoff
+	}
+	cfg := c.config
+	c.mu.Unlock()
+
+	logging.Info("MCP reconnecting", "server", c.serverName, "backoff", currentBackoff)
+
+	select {
+	case <-time.After(currentBackoff):
+	case <-c.ctx.Done():
+		return false
+	}
+
+	// Try to recreate transport
+	var transport Transport
+	var err error
+
+	switch cfg.Transport {
+	case "stdio":
+		transport, err = NewStdioTransport(cfg.Command, cfg.Args, cfg.Env)
+	case "http":
+		transport, err = NewHTTPTransport(cfg.URL, cfg.Headers, cfg.Timeout)
+	default:
+		logging.Error("MCP unknown transport for reconnect", "transport", cfg.Transport)
+		return false
+	}
+
+	if err != nil {
+		logging.Warn("MCP reconnect failed", "error", err)
+		return true // Keep trying
+	}
+
+	// Swap transport
+	oldTransport := c.transport
+	c.mu.Lock()
+	c.transport = transport
+	c.initialized = false
+	c.mu.Unlock()
+
+	// Close old transport (ignore errors)
+	_ = oldTransport.Close()
+
+	// Re-initialize
+	initCtx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+	defer cancel()
+
+	if err := c.Initialize(initCtx); err != nil {
+		logging.Warn("MCP re-initialize failed", "error", err)
+		return true // Keep trying
+	}
+
+	logging.Info("MCP reconnected successfully", "server", c.serverName)
+	return true
 }
 
 // handleMessage routes an incoming message to the appropriate handler.
@@ -371,6 +456,13 @@ func (c *Client) IsInitialized() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.initialized
+}
+
+// ConsecutiveFails returns the number of consecutive receive failures.
+func (c *Client) ConsecutiveFails() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.consecutiveFails
 }
 
 // Close closes the client and releases resources.

@@ -35,6 +35,12 @@ type DiffPreviewModel struct {
 	width      int
 	height     int
 
+	// Configurable context lines (default 3)
+	contextLines int
+
+	// Ignore whitespace-only changes
+	ignoreWhitespace bool
+
 	// Callback when user makes a decision
 	onDecision func(decision DiffDecision)
 }
@@ -61,9 +67,10 @@ func NewDiffPreviewModel(styles *Styles) DiffPreviewModel {
 	vp.MouseWheelEnabled = true
 
 	return DiffPreviewModel{
-		viewport: vp,
-		styles:   styles,
-		decision: DiffPending,
+		viewport:     vp,
+		styles:       styles,
+		decision:     DiffPending,
+		contextLines: 3,
 	}
 }
 
@@ -90,8 +97,12 @@ func (m *DiffPreviewModel) SetContent(filePath, oldContent, newContent, toolName
 	m.isNewFile = isNewFile
 	m.decision = DiffPending
 
-	// Generate diff
-	m.diff = m.generateDiff(oldContent, newContent)
+	m.refreshDiffView()
+}
+
+// refreshDiffView regenerates and re-renders the diff with current settings.
+func (m *DiffPreviewModel) refreshDiffView() {
+	m.diff = m.generateDiff(m.oldContent, m.newContent)
 	m.viewport.SetContent(m.highlightDiff(m.diff))
 	m.viewport.GotoTop()
 }
@@ -99,6 +110,12 @@ func (m *DiffPreviewModel) SetContent(filePath, oldContent, newContent, toolName
 // SetDecisionCallback sets the callback for when user makes a decision.
 func (m *DiffPreviewModel) SetDecisionCallback(callback func(DiffDecision)) {
 	m.onDecision = callback
+}
+
+// diffLine represents a single line in the diff with its type.
+type diffLine struct {
+	Type diffmatchpatch.Operation
+	Text string
 }
 
 // generateDiff creates a unified diff between old and new content.
@@ -115,51 +132,188 @@ func (m *DiffPreviewModel) generateDiff(oldContent, newContent string) string {
 	diffs := dmp.DiffMain(oldContent, newContent, true)
 	diffs = dmp.DiffCleanupSemantic(diffs)
 
-	// Convert to unified diff format
-	oldLineNum := 1
-	newLineNum := 1
-
+	// Convert diffs to individual lines with their types
+	var allLines []diffLine
 	for _, d := range diffs {
 		lines := strings.Split(d.Text, "\n")
 		for i, line := range lines {
-			// Skip empty trailing element from split
 			if i == len(lines)-1 && line == "" {
 				continue
 			}
-
-			switch d.Type {
-			case diffmatchpatch.DiffEqual:
-				result.WriteString(fmt.Sprintf(" %s\n", line))
-				oldLineNum++
-				newLineNum++
-			case diffmatchpatch.DiffDelete:
-				result.WriteString(fmt.Sprintf("-%s\n", line))
-				oldLineNum++
-			case diffmatchpatch.DiffInsert:
-				result.WriteString(fmt.Sprintf("+%s\n", line))
-				newLineNum++
-			}
+			allLines = append(allLines, diffLine{Type: d.Type, Text: line})
 		}
 	}
 
-	// Stats
-	added := 0
-	removed := 0
-	for _, d := range diffs {
-		if d.Type == diffmatchpatch.DiffInsert {
-			added += strings.Count(d.Text, "\n") + 1
-		} else if d.Type == diffmatchpatch.DiffDelete {
-			removed += strings.Count(d.Text, "\n") + 1
+	// Build hunks with context lines
+	contextN := m.contextLines
+	if contextN < 0 {
+		contextN = 0
+	}
+
+	// Find ranges of changed lines (non-Equal)
+	type changeRange struct {
+		start, end int // indices into allLines
+	}
+	var changes []changeRange
+	i := 0
+	for i < len(allLines) {
+		if allLines[i].Type != diffmatchpatch.DiffEqual {
+			start := i
+			for i < len(allLines) && allLines[i].Type != diffmatchpatch.DiffEqual {
+				i++
+			}
+			changes = append(changes, changeRange{start, i})
+		} else {
+			i++
+		}
+	}
+
+	if len(changes) == 0 {
+		return result.String()
+	}
+
+	// Merge change ranges that are close together (separated by <= 2*contextN equal lines)
+	type hunkRange struct {
+		start, end int // indices into allLines, including context
+	}
+	var hunks []hunkRange
+
+	for _, ch := range changes {
+		hStart := ch.start - contextN
+		if hStart < 0 {
+			hStart = 0
+		}
+		hEnd := ch.end + contextN
+		if hEnd > len(allLines) {
+			hEnd = len(allLines)
+		}
+
+		if len(hunks) > 0 && hStart <= hunks[len(hunks)-1].end {
+			// Merge with previous hunk
+			hunks[len(hunks)-1].end = hEnd
+		} else {
+			hunks = append(hunks, hunkRange{hStart, hEnd})
+		}
+	}
+
+	// Compute old/new line numbers for each position in allLines
+	oldLineNums := make([]int, len(allLines)+1)
+	newLineNums := make([]int, len(allLines)+1)
+	oldLine := 1
+	newLine := 1
+	for idx, dl := range allLines {
+		oldLineNums[idx] = oldLine
+		newLineNums[idx] = newLine
+		switch dl.Type {
+		case diffmatchpatch.DiffEqual:
+			oldLine++
+			newLine++
+		case diffmatchpatch.DiffDelete:
+			oldLine++
+		case diffmatchpatch.DiffInsert:
+			newLine++
+		}
+	}
+	oldLineNums[len(allLines)] = oldLine
+	newLineNums[len(allLines)] = newLine
+
+	// Render each hunk
+	for _, hunk := range hunks {
+		// Calculate hunk header line counts
+		oldStart := oldLineNums[hunk.start]
+		newStart := newLineNums[hunk.start]
+		oldCount := 0
+		newCount := 0
+		for idx := hunk.start; idx < hunk.end; idx++ {
+			switch allLines[idx].Type {
+			case diffmatchpatch.DiffEqual:
+				oldCount++
+				newCount++
+			case diffmatchpatch.DiffDelete:
+				oldCount++
+			case diffmatchpatch.DiffInsert:
+				newCount++
+			}
+		}
+
+		// Check if this hunk is whitespace-only when ignoreWhitespace is enabled
+		if m.ignoreWhitespace && isWhitespaceOnlyHunk(allLines[hunk.start:hunk.end]) {
+			continue
+		}
+
+		// Find the nearest function/class/def line above the hunk start
+		funcName := findNearestFuncName(allLines, hunk.start)
+
+		// Write hunk header
+		header := fmt.Sprintf("@@ -%d,%d +%d,%d @@", oldStart, oldCount, newStart, newCount)
+		if funcName != "" {
+			header += " " + funcName
+		}
+		result.WriteString(header + "\n")
+
+		// Write hunk lines
+		for idx := hunk.start; idx < hunk.end; idx++ {
+			dl := allLines[idx]
+			switch dl.Type {
+			case diffmatchpatch.DiffEqual:
+				result.WriteString(fmt.Sprintf(" %s\n", dl.Text))
+			case diffmatchpatch.DiffDelete:
+				result.WriteString(fmt.Sprintf("-%s\n", dl.Text))
+			case diffmatchpatch.DiffInsert:
+				result.WriteString(fmt.Sprintf("+%s\n", dl.Text))
+			}
 		}
 	}
 
 	return result.String()
 }
 
-// highlightDiff applies syntax highlighting to the diff.
+// findNearestFuncName searches backward from the given position to find the nearest
+// function, class, or def declaration in the context (equal) lines.
+func findNearestFuncName(lines []diffLine, startIdx int) string {
+	for i := startIdx - 1; i >= 0; i-- {
+		text := lines[i].Text
+		// Only consider equal (context) lines for function detection
+		if lines[i].Type != diffmatchpatch.DiffEqual {
+			continue
+		}
+		trimmed := strings.TrimSpace(text)
+		for _, prefix := range []string{"func ", "class ", "def "} {
+			if strings.HasPrefix(trimmed, prefix) {
+				// Return the full signature up to the opening brace or end of line
+				sig := trimmed
+				if braceIdx := strings.Index(sig, "{"); braceIdx > 0 {
+					sig = strings.TrimSpace(sig[:braceIdx])
+				}
+				return sig
+			}
+		}
+	}
+	return ""
+}
+
+// isWhitespaceOnlyHunk checks if a hunk contains only whitespace changes.
+func isWhitespaceOnlyHunk(lines []diffLine) bool {
+	hasChange := false
+	for _, dl := range lines {
+		if dl.Type == diffmatchpatch.DiffEqual {
+			continue
+		}
+		hasChange = true
+		trimmed := strings.TrimSpace(dl.Text)
+		if trimmed != "" {
+			return false
+		}
+	}
+	return hasChange
+}
+
+// highlightDiff applies syntax highlighting to the diff with inline word-level highlighting.
 func (m *DiffPreviewModel) highlightDiff(diff string) string {
 	addedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#10B981")).Bold(true)
 	removedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#EF4444")).Bold(true)
+	addedWordStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ECFDF5")).Background(lipgloss.Color("#059669")).Bold(true)
+	removedWordStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FEF2F2")).Background(lipgloss.Color("#DC2626")).Bold(true)
 	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#06B6D4")).Bold(true)
 	hunkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#A78BFA"))
 	contextStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#9CA3AF"))
@@ -167,7 +321,42 @@ func (m *DiffPreviewModel) highlightDiff(diff string) string {
 	lines := strings.Split(diff, "\n")
 	var result strings.Builder
 
-	for _, line := range lines {
+	// Pre-scan to pair consecutive removed/added line blocks for word-level diff
+	paired := make(map[int]int) // maps removed line index -> added line index and vice versa
+
+	i := 0
+	for i < len(lines) {
+		// Find a block of removed lines followed by added lines
+		if strings.HasPrefix(lines[i], "-") && !strings.HasPrefix(lines[i], "---") {
+			removeStart := i
+			for i < len(lines) && strings.HasPrefix(lines[i], "-") && !strings.HasPrefix(lines[i], "---") {
+				i++
+			}
+			removeEnd := i
+
+			addStart := i
+			for i < len(lines) && strings.HasPrefix(lines[i], "+") && !strings.HasPrefix(lines[i], "+++") {
+				i++
+			}
+			addEnd := i
+
+			// Pair up removed and added lines 1-to-1
+			removeCount := removeEnd - removeStart
+			addCount := addEnd - addStart
+			pairCount := removeCount
+			if addCount < pairCount {
+				pairCount = addCount
+			}
+			for p := 0; p < pairCount; p++ {
+				paired[removeStart+p] = addStart + p
+				paired[addStart+p] = removeStart + p
+			}
+		} else {
+			i++
+		}
+	}
+
+	for idx, line := range lines {
 		var styledLine string
 
 		switch {
@@ -175,10 +364,24 @@ func (m *DiffPreviewModel) highlightDiff(diff string) string {
 			styledLine = headerStyle.Render(line)
 		case strings.HasPrefix(line, "@@"):
 			styledLine = hunkStyle.Render(line)
-		case strings.HasPrefix(line, "+"):
-			styledLine = addedStyle.Render(line)
-		case strings.HasPrefix(line, "-"):
-			styledLine = removedStyle.Render(line)
+		case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---"):
+			if partnerIdx, ok := paired[idx]; ok && strings.HasPrefix(lines[partnerIdx], "+") {
+				// Word-level highlight for paired removed line
+				oldText := line[1:] // strip the "-" prefix
+				newText := lines[partnerIdx][1:]
+				styledLine = removedStyle.Render("-") + highlightWordDiffs(oldText, newText, removedStyle, removedWordStyle)
+			} else {
+				styledLine = removedStyle.Render(line)
+			}
+		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++"):
+			if partnerIdx, ok := paired[idx]; ok && strings.HasPrefix(lines[partnerIdx], "-") {
+				// Word-level highlight for paired added line
+				oldText := lines[partnerIdx][1:]
+				newText := line[1:]
+				styledLine = addedStyle.Render("+") + highlightWordDiffs(newText, oldText, addedStyle, addedWordStyle)
+			} else {
+				styledLine = addedStyle.Render(line)
+			}
 		default:
 			styledLine = contextStyle.Render(line)
 		}
@@ -187,6 +390,29 @@ func (m *DiffPreviewModel) highlightDiff(diff string) string {
 		result.WriteString("\n")
 	}
 
+	return result.String()
+}
+
+// highlightWordDiffs highlights the words in 'text' that differ from 'other'.
+// baseStyle is applied to unchanged portions; emphStyle is applied to changed words.
+// 'text' is the line we are rendering; 'other' is the counterpart line for comparison.
+func highlightWordDiffs(text, other string, baseStyle, emphStyle lipgloss.Style) string {
+	dmp := diffmatchpatch.New()
+	diffs := dmp.DiffMain(other, text, false)
+	diffs = dmp.DiffCleanupSemantic(diffs)
+
+	var result strings.Builder
+	for _, d := range diffs {
+		switch d.Type {
+		case diffmatchpatch.DiffEqual:
+			result.WriteString(baseStyle.Render(d.Text))
+		case diffmatchpatch.DiffInsert:
+			// This text is unique to 'text' (the line we are rendering)
+			result.WriteString(emphStyle.Render(d.Text))
+		case diffmatchpatch.DiffDelete:
+			// This text is unique to 'other' — skip it for this line's rendering
+		}
+	}
 	return result.String()
 }
 
@@ -251,6 +477,27 @@ func (m DiffPreviewModel) Update(msg tea.Msg) (DiffPreviewModel, tea.Cmd) {
 		case "ctrl+u":
 			m.viewport.HalfViewUp()
 			return m, nil
+
+		case "=": // "+" key (shift not needed on most keyboards, use "=" as alias for "+")
+			m.contextLines++
+			if m.contextLines > 20 {
+				m.contextLines = 20
+			}
+			m.refreshDiffView()
+			return m, nil
+
+		case "-":
+			m.contextLines--
+			if m.contextLines < 0 {
+				m.contextLines = 0
+			}
+			m.refreshDiffView()
+			return m, nil
+
+		case "I":
+			m.ignoreWhitespace = !m.ignoreWhitespace
+			m.refreshDiffView()
+			return m, nil
 		}
 
 	case tea.MouseMsg:
@@ -289,14 +536,20 @@ func (m DiffPreviewModel) View() string {
 	builder.WriteString(markerStyle.Render("  ⎿  ") + toolStyle.Render(m.toolName+" → ") + fileStyle.Render(fileLabel+m.filePath))
 	builder.WriteString("\n")
 
-	// Diff statistics
+	// Diff statistics and settings
 	addCount, removeCount := m.countChanges()
 	addedStyle := lipgloss.NewStyle().Foreground(ColorSuccess)
 	removedStyle := lipgloss.NewStyle().Foreground(ColorError)
+	settingsStyle := lipgloss.NewStyle().Foreground(ColorMuted)
 	stats := fmt.Sprintf("%s, %s",
 		addedStyle.Render(fmt.Sprintf("+%d", addCount)),
 		removedStyle.Render(fmt.Sprintf("-%d", removeCount)))
-	builder.WriteString(markerStyle.Render("     ") + stats)
+	wsLabel := "off"
+	if m.ignoreWhitespace {
+		wsLabel = "on"
+	}
+	settings := settingsStyle.Render(fmt.Sprintf("  context: %d | ignore-ws: %s", m.contextLines, wsLabel))
+	builder.WriteString(markerStyle.Render("     ") + stats + settings)
 	builder.WriteString("\n\n")
 
 	// Diff viewport without border
@@ -345,7 +598,7 @@ func (m DiffPreviewModel) renderActions(builder *strings.Builder) {
 	builder.WriteString(rejectStyle.Render("n Reject"))
 	builder.WriteString("\n\n")
 
-	builder.WriteString(hintStyle.Render("j/k: Scroll | g/G: Top/Bottom | Ctrl+D/U: Half page"))
+	builder.WriteString(hintStyle.Render("j/k: Scroll | g/G: Top/Bottom | Ctrl+D/U: Half page | +/-: Context | I: Ignore whitespace"))
 }
 
 // GetDecision returns the current decision.

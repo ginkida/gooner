@@ -23,6 +23,7 @@ type Watcher struct {
 	mu           sync.Mutex
 	done         chan struct{}
 	running      bool
+	stopOnce     sync.Once
 }
 
 // NewWatcher creates a new file watcher for the specified directory.
@@ -106,7 +107,9 @@ func (w *Watcher) Stop() error {
 	w.running = false
 	w.mu.Unlock()
 
-	close(w.done)
+	w.stopOnce.Do(func() {
+		close(w.done)
+	})
 	return w.fsWatcher.Close()
 }
 

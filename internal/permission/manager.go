@@ -5,6 +5,9 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"sync"
+	"time"
+
+	"gokin/internal/cache"
 )
 
 // PromptHandler is a function that prompts the user for permission.
@@ -17,21 +20,13 @@ type Manager struct {
 	enabled bool
 
 	// Session cache for "allow for session" and "deny for session" decisions
-	sessionCache map[string]Decision
+	sessionCache *cache.LRUCache[string, Decision]
 
 	// Prompt handler for asking the user
 	promptHandler PromptHandler
 
-	// LRU cache limits to prevent unbounded growth
-	maxCacheEntries int
-
 	mu sync.RWMutex
 }
-
-const (
-	// DefaultMaxCacheEntries is the default maximum number of cached permission decisions
-	DefaultMaxCacheEntries = 1000
-)
 
 // NewManager creates a new permission manager.
 func NewManager(rules *Rules, enabled bool) *Manager {
@@ -40,10 +35,9 @@ func NewManager(rules *Rules, enabled bool) *Manager {
 	}
 
 	return &Manager{
-		rules:           rules,
-		enabled:         enabled,
-		sessionCache:    make(map[string]Decision),
-		maxCacheEntries: DefaultMaxCacheEntries,
+		rules:        rules,
+		enabled:      enabled,
+		sessionCache: cache.NewLRUCache[string, Decision](1000, 24*time.Hour),
 	}
 }
 
@@ -88,9 +82,7 @@ func (m *Manager) Check(ctx context.Context, toolName string, args map[string]an
 	key := m.cacheKey(toolName, args)
 
 	// Check session cache first
-	m.mu.RLock()
-	if decision, ok := m.sessionCache[key]; ok {
-		m.mu.RUnlock()
+	if decision, ok := m.sessionCache.Get(key); ok {
 		switch decision {
 		case DecisionAllowSession:
 			return &Response{Allowed: true, Decision: decision}, nil
@@ -101,8 +93,6 @@ func (m *Manager) Check(ctx context.Context, toolName string, args map[string]an
 				Reason:   "Denied for session",
 			}, nil
 		}
-	} else {
-		m.mu.RUnlock()
 	}
 
 	// Get policy from rules
@@ -188,49 +178,14 @@ func (m *Manager) askUser(ctx context.Context, toolName string, args map[string]
 }
 
 // rememberKey stores a session-level decision for a cache key.
-// Implements LRU eviction when cache exceeds max entries.
 func (m *Manager) rememberKey(key string, decision Decision) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Check if we need to evict entries
-	if len(m.sessionCache) >= m.maxCacheEntries {
-		// Simple eviction strategy: remove half of the oldest entries
-		// In production, you might want a proper LRU with access timestamps
-		evictCount := m.maxCacheEntries / 2
-		count := 0
-		for k := range m.sessionCache {
-			if count >= evictCount {
-				break
-			}
-			delete(m.sessionCache, k)
-			count++
-		}
-	}
-
-	m.sessionCache[key] = decision
+	m.sessionCache.Set(key, decision)
 }
 
 // Remember stores a session-level decision for a tool.
 // Deprecated: Use RememberWithArgs for sensitive tools.
 func (m *Manager) Remember(toolName string, decision Decision) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Evict old entries if cache is at capacity
-	if len(m.sessionCache) >= m.maxCacheEntries {
-		evictCount := m.maxCacheEntries / 4
-		count := 0
-		for k := range m.sessionCache {
-			if count >= evictCount {
-				break
-			}
-			delete(m.sessionCache, k)
-			count++
-		}
-	}
-
-	m.sessionCache[toolName] = decision
+	m.sessionCache.Set(toolName, decision)
 }
 
 // RememberWithArgs stores a session-level decision for a tool with args.
@@ -241,24 +196,18 @@ func (m *Manager) RememberWithArgs(toolName string, args map[string]any, decisio
 
 // Forget removes a session-level decision for a tool.
 func (m *Manager) Forget(toolName string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.sessionCache, toolName)
+	m.sessionCache.Delete(toolName)
 }
 
 // ForgetWithArgs removes a session-level decision for a tool with args.
 func (m *Manager) ForgetWithArgs(toolName string, args map[string]any) {
 	key := m.cacheKey(toolName, args)
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.sessionCache, key)
+	m.sessionCache.Delete(key)
 }
 
 // ClearSession clears all session-level decisions.
 func (m *Manager) ClearSession() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.sessionCache = make(map[string]Decision)
+	m.sessionCache.Clear()
 }
 
 // IsEnabled returns whether the permission system is enabled.

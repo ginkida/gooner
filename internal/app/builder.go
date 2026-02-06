@@ -68,6 +68,8 @@ type Builder struct {
 	auditLogger      *audit.Logger
 	fileWatcher      *watcher.Watcher
 	semanticIdx      *semantic.EnhancedIndexer
+	incrementalIdx   *semantic.IncrementalIndexer
+	backgroundIdx    *semantic.BackgroundIndexer
 	taskRouter       *router.Router
 	taskOrchestrator *TaskOrchestrator // Unified Task Orchestrator
 
@@ -344,6 +346,9 @@ func (b *Builder) initTools() error {
 	compactor := appcontext.NewResultCompactor(b.cfg.Context.ToolResultMaxChars)
 	b.executor.SetCompactor(compactor)
 
+	toolCache := tools.NewToolResultCache(tools.DefaultCacheConfig())
+	b.executor.SetToolCache(toolCache)
+
 	return nil
 }
 
@@ -439,11 +444,14 @@ func (b *Builder) initManagers() error {
 	b.hooksManager = hooks.NewManager(b.cfg.Hooks.Enabled, b.workDir)
 	for _, hookCfg := range b.cfg.Hooks.Hooks {
 		b.hooksManager.AddHook(&hooks.Hook{
-			Name:     hookCfg.Name,
-			Type:     hooks.Type(hookCfg.Type),
-			ToolName: hookCfg.ToolName,
-			Command:  hookCfg.Command,
-			Enabled:  hookCfg.Enabled,
+			Name:        hookCfg.Name,
+			Type:        hooks.Type(hookCfg.Type),
+			ToolName:    hookCfg.ToolName,
+			Command:     hookCfg.Command,
+			Enabled:     hookCfg.Enabled,
+			Condition:   hooks.Condition(hookCfg.Condition),
+			FailOnError: hookCfg.FailOnError,
+			DependsOn:   hookCfg.DependsOn,
 		})
 	}
 	b.executor.SetHooks(b.hooksManager)
@@ -928,6 +936,25 @@ func (b *Builder) initIntegrations() error {
 				b.configDir,
 			)
 
+			// Create incremental indexer wrapping enhanced indexer
+			bgConfig := semantic.DefaultBackgroundIndexerConfig()
+			b.incrementalIdx = semantic.NewIncrementalIndexer(
+				b.semanticIdx,
+				bgConfig.BatchSize,
+				bgConfig.Workers,
+			)
+
+			// Create background indexer for watcher-driven incremental indexing
+			b.backgroundIdx = semantic.NewBackgroundIndexer(
+				b.incrementalIdx,
+				b.fileWatcher,
+				b.workDir,
+				bgConfig,
+			)
+			b.backgroundIdx.SetOnError(func(err error) {
+				logging.Warn("background semantic indexing error", "error", err)
+			})
+
 			b.registry.Register(tools.NewSemanticSearchTool(b.semanticIdx, b.workDir, b.cfg.Semantic.TopK))
 
 			// Register semantic cleanup tool
@@ -1105,6 +1132,9 @@ func (b *Builder) wireDependencies() error {
 			app.mu.Lock()
 			app.responseToolsUsed = append(app.responseToolsUsed, name)
 			app.mu.Unlock()
+
+			// Task 5.8: Record tool usage for pattern learning
+			app.recordToolUsage(name)
 
 			if app.program != nil {
 				app.program.Send(ui.ToolCallMsg{Name: name, Args: args})
@@ -1317,6 +1347,7 @@ func (b *Builder) assembleApp() *App {
 		auditLogger:          b.auditLogger,
 		fileWatcher:          b.fileWatcher,
 		semanticIndexer:      b.semanticIdx,
+		backgroundIndexer:    b.backgroundIdx,
 		taskRouter:           b.taskRouter,
 		orchestrator:         b.taskOrchestrator,
 		// Phase 4: UI Auto-Update System (initialized separately)

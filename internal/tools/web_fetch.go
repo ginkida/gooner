@@ -346,5 +346,45 @@ func (t *WebFetchTool) matchesSelector(n *html.Node, selector string) bool {
 	}
 
 	// Tag selector
-	return strings.ToLower(n.Data) == strings.ToLower(selector)
+	return strings.EqualFold(n.Data, selector)
+}
+
+// SupportsStreaming returns true — web_fetch supports streaming for large pages.
+func (t *WebFetchTool) SupportsStreaming() bool { return true }
+
+// ExecuteStreaming fetches URL content with streaming output.
+func (t *WebFetchTool) ExecuteStreaming(ctx context.Context, args map[string]any) (*StreamingToolResult, error) {
+	result, chunks, errChan, complete := NewStreamingToolResult(50)
+
+	go func() {
+		defer complete()
+
+		toolResult, err := t.Execute(ctx, args)
+		if err != nil {
+			errChan <- err
+			return
+		}
+
+		if !toolResult.Success {
+			chunks <- "Error: " + toolResult.Error
+			return
+		}
+
+		// Stream content in 2KB chunks
+		content := toolResult.Content
+		const chunkSize = 2048
+		for i := 0; i < len(content); i += chunkSize {
+			end := i + chunkSize
+			if end > len(content) {
+				end = len(content)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case chunks <- content[i:end]:
+			}
+		}
+	}()
+
+	return result, nil
 }

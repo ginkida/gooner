@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -63,10 +64,69 @@ func NewStore(configDir, projectPath string, maxEntries int) (*Store, error) {
 	return store, nil
 }
 
+// Auto-tagging regex patterns.
+var (
+	reFilePath     = regexp.MustCompile(`(?:^|\s)(/[a-zA-Z0-9_.\-/]+)`)
+	reFuncName     = regexp.MustCompile(`(?:func|function)\s+([a-zA-Z_][a-zA-Z0-9_]*)`)
+	rePackageName  = regexp.MustCompile(`package\s+([a-zA-Z_][a-zA-Z0-9_]*)`)
+)
+
+// extractContentTags extracts key concepts from content and returns them as tags.
+func extractContentTags(content string) []string {
+	seen := make(map[string]bool)
+	var tags []string
+
+	addTag := func(tag string) {
+		if tag != "" && !seen[tag] {
+			seen[tag] = true
+			tags = append(tags, tag)
+		}
+	}
+
+	// Extract file paths
+	for _, match := range reFilePath.FindAllStringSubmatch(content, -1) {
+		addTag(match[1])
+	}
+
+	// Extract function names
+	for _, match := range reFuncName.FindAllStringSubmatch(content, -1) {
+		addTag(match[1])
+	}
+
+	// Extract package names
+	for _, match := range rePackageName.FindAllStringSubmatch(content, -1) {
+		addTag(match[1])
+	}
+
+	return tags
+}
+
+// autoTag merges extracted tags into the entry, deduplicating with existing tags.
+func autoTag(entry *Entry) {
+	extracted := extractContentTags(entry.Content)
+	if len(extracted) == 0 {
+		return
+	}
+
+	seen := make(map[string]bool)
+	for _, t := range entry.Tags {
+		seen[t] = true
+	}
+	for _, t := range extracted {
+		if !seen[t] {
+			entry.Tags = append(entry.Tags, t)
+			seen[t] = true
+		}
+	}
+}
+
 // Add adds a new entry to the store.
 func (s *Store) Add(entry *Entry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Auto-tag: extract key concepts from content
+	autoTag(entry)
 
 	// If key exists, remove old ID from both stores and index
 	if entry.Key != "" {
@@ -122,7 +182,73 @@ func (s *Store) GetByID(id string) (*Entry, bool) {
 	return entry, ok
 }
 
+// Edit updates the content of an existing entry by ID, re-runs auto-tagging,
+// and marks the store dirty.
+func (s *Store) Edit(id string, newContent string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, ok := s.entries[id]
+	if !ok {
+		entry, ok = s.globalEntries[id]
+	}
+	if !ok {
+		return fmt.Errorf("entry not found: %s", id)
+	}
+
+	entry.Content = newContent
+	// Reset tags and re-run auto-tagging
+	entry.Tags = nil
+	autoTag(entry)
+
+	s.dirty = true
+	s.scheduleSave()
+	return nil
+}
+
+// scoredEntry holds an entry and its relevance score for search ranking.
+type scoredEntry struct {
+	entry *Entry
+	score int
+}
+
+// scoreEntry calculates a relevance score for an entry against the query.
+// Exact key match = 10, tag match = 5 per tag, content substring = 1.
+func scoreEntry(entry *Entry, query SearchQuery) int {
+	score := 0
+	queryLower := strings.ToLower(query.Query)
+
+	// Exact key match
+	if query.Query != "" && strings.EqualFold(entry.Key, query.Query) {
+		score += 10
+	}
+
+	// Tag matches
+	if query.Query != "" {
+		for _, tag := range entry.Tags {
+			if strings.EqualFold(tag, query.Query) {
+				score += 5
+			}
+		}
+	}
+
+	// Content substring match
+	if query.Query != "" && strings.Contains(strings.ToLower(entry.Content), queryLower) {
+		score += 1
+	}
+
+	// If no query text provided, give a base score so entries aren't filtered out
+	if query.Query == "" {
+		score = 1
+	}
+
+	return score
+}
+
 // Search finds entries matching the query.
+// Results are scored by relevance: exact key match = 10, tag match = 5,
+// content substring = 1. Results are sorted by score descending, then by
+// timestamp descending as a tiebreaker.
 func (s *Store) Search(query SearchQuery) []*Entry {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -130,32 +256,45 @@ func (s *Store) Search(query SearchQuery) []*Entry {
 	// Set current project for filtering
 	query.Project = s.projectHash
 
-	var results []*Entry
+	var scored []scoredEntry
 
 	// Search project and session entries
 	for _, entry := range s.entries {
 		if !entry.Matches(query) {
 			continue
 		}
-		if s.matchesQuery(entry, query) {
-			results = append(results, entry)
+		sc := scoreEntry(entry, query)
+		if sc > 0 {
+			scored = append(scored, scoredEntry{entry: entry, score: sc})
 		}
 	}
 
 	// Search global entries (unless ProjectOnly is specified)
 	if !query.ProjectOnly {
 		for _, entry := range s.globalEntries {
-			// Global entries don't have a project, so Match will ignore project check
-			if s.matchesQuery(entry, query) {
-				results = append(results, entry)
+			if !entry.Matches(query) {
+				continue
+			}
+			sc := scoreEntry(entry, query)
+			if sc > 0 {
+				scored = append(scored, scoredEntry{entry: entry, score: sc})
 			}
 		}
 	}
 
-	// Sort by timestamp (newest first)
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Timestamp.After(results[j].Timestamp)
+	// Sort by score descending, then by timestamp descending
+	sort.Slice(scored, func(i, j int) bool {
+		if scored[i].score != scored[j].score {
+			return scored[i].score > scored[j].score
+		}
+		return scored[i].entry.Timestamp.After(scored[j].entry.Timestamp)
 	})
+
+	// Extract entries from scored results
+	results := make([]*Entry, len(scored))
+	for i, se := range scored {
+		results[i] = se.entry
+	}
 
 	// Apply limit
 	if query.Limit > 0 && len(results) > query.Limit {
@@ -196,27 +335,84 @@ func (s *Store) Remove(idOrKey string) bool {
 	return false
 }
 
-// matchesQuery helper for search logic
-func (s *Store) matchesQuery(entry *Entry, query SearchQuery) bool {
-	if query.Query != "" {
-		queryLower := strings.ToLower(query.Query)
-		contentLower := strings.ToLower(entry.Content)
-		keyLower := strings.ToLower(entry.Key)
-
-		if !strings.Contains(contentLower, queryLower) &&
-			!strings.Contains(keyLower, queryLower) {
-			return false
-		}
-	}
-	return true
-}
-
-// List returns all entries for the current project.
+// List returns entries for the current project (optionally project-only).
 func (s *Store) List(projectOnly bool) []*Entry {
 	return s.Search(SearchQuery{
 		ProjectOnly: projectOnly,
 		Project:     s.projectHash,
 	})
+}
+
+// ListAll returns all entries (project + global) sorted by timestamp, newest first.
+func (s *Store) ListAll() []*Entry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	results := make([]*Entry, 0, len(s.entries)+len(s.globalEntries))
+	for _, entry := range s.entries {
+		results = append(results, entry)
+	}
+	for _, entry := range s.globalEntries {
+		results = append(results, entry)
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Timestamp.After(results[j].Timestamp)
+	})
+
+	return results
+}
+
+// Export serializes all entries (project + global) to JSON.
+func (s *Store) Export() ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	all := make([]*Entry, 0, len(s.entries)+len(s.globalEntries))
+	for _, entry := range s.entries {
+		all = append(all, entry)
+	}
+	for _, entry := range s.globalEntries {
+		all = append(all, entry)
+	}
+
+	return json.MarshalIndent(all, "", "  ")
+}
+
+// Import deserializes entries from JSON and merges them into the store.
+// Duplicate entries (by ID) are skipped.
+func (s *Store) Import(data []byte) error {
+	var entries []*Entry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return fmt.Errorf("failed to unmarshal import data: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, entry := range entries {
+		// Skip duplicates by ID
+		if _, ok := s.entries[entry.ID]; ok {
+			continue
+		}
+		if _, ok := s.globalEntries[entry.ID]; ok {
+			continue
+		}
+
+		if entry.Type == MemoryGlobal {
+			s.globalEntries[entry.ID] = entry
+		} else {
+			s.entries[entry.ID] = entry
+		}
+
+		if entry.Key != "" {
+			s.byKey[entry.Key] = entry.ID
+		}
+	}
+
+	s.dirty = true
+	s.scheduleSave()
+	return nil
 }
 
 // GetForContext returns a formatted string of memories for injection into prompts.

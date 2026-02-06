@@ -1906,31 +1906,7 @@ func (a *Agent) executeTool(ctx context.Context, call *genai.FunctionCall) tools
 
 // isRetryableError determines if an error is worth retrying
 func isRetryableError(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	errMsg := strings.ToLower(err.Error())
-
-	// Network/timeout errors are retryable
-	retryablePatterns := []string{
-		"timeout",
-		"connection refused",
-		"connection reset",
-		"temporary failure",
-		"rate limit",
-		"deadline exceeded",
-		"context deadline exceeded",
-	}
-
-	for _, pattern := range retryablePatterns {
-		if strings.Contains(errMsg, pattern) {
-			return true
-		}
-	}
-
-	// By default, don't retry
-	return false
+	return client.IsRetryableError(err)
 }
 
 // buildResponseParts creates Parts from a response.

@@ -12,14 +12,23 @@ import (
 	"google.golang.org/genai"
 )
 
-const summarizationPrompt = `Summarize this conversation for context preservation. Keep:
-- Key decisions made
-- Code changes and their reasons
-- Unresolved issues or tasks
-- Critical context needed to continue the conversation
-- File paths and function names mentioned
+const summarizationPrompt = `Summarize this development conversation for context preservation.
 
-Be concise but preserve important technical details.
+PRIORITIES (highest to lowest):
+1. Specific file paths and modified functions/methods
+2. Error messages encountered and how they were resolved
+3. Dependencies discovered between components
+4. Configuration values set or changed
+5. Key architectural decisions and their reasoning
+6. Unresolved issues or next steps
+
+DO NOT include:
+- Verbose tool output or raw logs
+- Intermediate failed attempts (only final solutions)
+- UI confirmations or acknowledgments
+- Repeated file reads of the same content
+
+Format: Use bullet points grouped by topic. Start each group with the relevant file path.
 
 CONVERSATION TO SUMMARIZE:
 %s
@@ -85,19 +94,14 @@ func (s *Summarizer) doSummarize(ctx context.Context, messages []*genai.Content)
 	return summary, nil
 }
 
-// summarizeHierarchical handles extremely large conversations by summarizing chunks first.
+// summarizeHierarchical handles large conversations by splitting on semantic boundaries.
 func (s *Summarizer) summarizeHierarchical(ctx context.Context, messages []*genai.Content) (*genai.Content, error) {
-	const chunkSize = 50
+	chunks := s.splitOnBoundaries(messages)
 	var midSummaries []string
 
-	for i := 0; i < len(messages); i += chunkSize {
-		end := i + chunkSize
-		if end > len(messages) {
-			end = len(messages)
-		}
-
-		formatted := s.formatMessages(messages[i:end])
-		prompt := fmt.Sprintf("Summarize this segment of a long development conversation. Focus on technical decisions and file changes:\n\n%s", formatted)
+	for _, chunk := range chunks {
+		formatted := s.formatMessages(chunk)
+		prompt := fmt.Sprintf("Summarize this segment of a development conversation. Focus on file changes, errors resolved, and technical decisions:\n\n%s", formatted)
 
 		stream, err := s.client.SendMessage(ctx, prompt)
 		if err != nil {
@@ -111,7 +115,7 @@ func (s *Summarizer) summarizeHierarchical(ctx context.Context, messages []*gena
 	}
 
 	// Final summarization of summaries
-	finalPrompt := fmt.Sprintf("Combine these conversation segment summaries into a single cohesive technical summary:\n\n%s", strings.Join(midSummaries, "\n\n---\n\n"))
+	finalPrompt := fmt.Sprintf("Combine these conversation segment summaries into a single cohesive technical summary. Group by file/component:\n\n%s", strings.Join(midSummaries, "\n\n---\n\n"))
 	stream, err := s.client.SendMessage(ctx, finalPrompt)
 	if err != nil {
 		return nil, err
@@ -123,6 +127,72 @@ func (s *Summarizer) summarizeHierarchical(ctx context.Context, messages []*gena
 
 	summaryText := fmt.Sprintf("[Long-term conversation summary]\n%s\n[End of summary]", resp.Text)
 	return genai.NewContentFromText(summaryText, genai.RoleUser), nil
+}
+
+// splitOnBoundaries splits messages into chunks at semantic boundaries
+// (low-priority messages like confirmations, repeated reads, verbose logs).
+func (s *Summarizer) splitOnBoundaries(messages []*genai.Content) [][]*genai.Content {
+	const maxChunkSize = 60
+	const minChunkSize = 15
+
+	var chunks [][]*genai.Content
+	var current []*genai.Content
+
+	for _, msg := range messages {
+		current = append(current, msg)
+
+		// Split at boundary if chunk is large enough
+		if len(current) >= minChunkSize && s.isLowPriorityMessage(msg) {
+			chunks = append(chunks, current)
+			current = nil
+		}
+
+		// Force split at max chunk size
+		if len(current) >= maxChunkSize {
+			chunks = append(chunks, current)
+			current = nil
+		}
+	}
+
+	// Append remaining
+	if len(current) > 0 {
+		if len(chunks) > 0 && len(current) < minChunkSize {
+			// Merge small tail with last chunk
+			chunks[len(chunks)-1] = append(chunks[len(chunks)-1], current...)
+		} else {
+			chunks = append(chunks, current)
+		}
+	}
+
+	return chunks
+}
+
+// isLowPriorityMessage checks if a message is a natural boundary for chunking.
+func (s *Summarizer) isLowPriorityMessage(msg *genai.Content) bool {
+	if msg == nil {
+		return false
+	}
+	for _, part := range msg.Parts {
+		// Confirmations and acknowledgments
+		if part.Text != "" {
+			lower := strings.ToLower(part.Text)
+			if len(lower) < 100 {
+				for _, phrase := range []string{"ok", "done", "got it", "understood", "sure", "yes", "confirmed"} {
+					if strings.Contains(lower, phrase) {
+						return true
+					}
+				}
+			}
+		}
+		// Verbose read-only tool responses
+		if part.FunctionResponse != nil {
+			name := part.FunctionResponse.Name
+			if name == "read" || name == "glob" || name == "tree" || name == "list_dir" || name == "env" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // formatMessages formats messages for summarization prompt.

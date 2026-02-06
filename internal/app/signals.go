@@ -173,6 +173,12 @@ func (a *App) gracefulShutdown(ctx context.Context) {
 		}
 	}
 
+	// 6b. Stop background semantic indexer
+	if a.backgroundIndexer != nil {
+		logging.Debug("stopping background semantic indexer")
+		a.backgroundIndexer.Stop()
+	}
+
 	// 7. Save semantic search cache
 	if a.semanticIndexer != nil {
 		logging.Debug("saving semantic cache")

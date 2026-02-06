@@ -364,10 +364,11 @@ func (m Model) renderPlanApproval() string {
 	builder.WriteString(borderStyle.Render("│"))
 	builder.WriteString("\n")
 
-	// Steps list
+	// Steps tree view
 	for _, step := range m.planRequest.Steps {
-		stepNum := fmt.Sprintf("  %d.", step.ID)
-		stepLine := stepNumStyle.Render(stepNum) + " " + stepTitleStyle.Render(step.Title)
+		// Step icon: all pending in approval view
+		stepIcon := "○"
+		stepLine := "  " + stepNumStyle.Render(stepIcon) + " " + stepTitleStyle.Render(fmt.Sprintf("Step %d: %s", step.ID, step.Title))
 
 		builder.WriteString(borderStyle.Render("│"))
 		builder.WriteString(stepLine)

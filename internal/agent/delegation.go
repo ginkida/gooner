@@ -20,6 +20,8 @@ type DelegationStrategy struct {
 	strategyOpt        *StrategyOptimizer  // For historical success rate lookup
 	delegationMetrics  *DelegationMetrics  // For adaptive delegation rules
 	currentContextType string              // Current task context type for metrics
+	failedRules        map[string]time.Time // Rule suppression cache: rule_key -> failure_time
+	activeAgents       int                  // Number of currently active delegated agents
 }
 
 // DelegationDecision represents a decision to delegate work to another agent.
@@ -61,6 +63,7 @@ func NewDelegationStrategy(agentType AgentType, messenger *AgentMessenger) *Dele
 		messenger:      messenger,
 		agentType:      agentType,
 		stuckThreshold: 5,
+		failedRules:    make(map[string]time.Time),
 	}
 }
 
@@ -105,6 +108,47 @@ func (d *DelegationStrategy) SetMessenger(m *AgentMessenger) {
 	d.messenger = m
 }
 
+// SuppressRule temporarily suppresses a delegation rule after failure.
+func (d *DelegationStrategy) SuppressRule(targetType string, duration time.Duration) {
+	if d.failedRules == nil {
+		d.failedRules = make(map[string]time.Time)
+	}
+	key := string(d.agentType) + ":" + targetType
+	d.failedRules[key] = time.Now().Add(duration)
+}
+
+// isRuleSuppressed checks if a delegation rule is currently suppressed.
+func (d *DelegationStrategy) isRuleSuppressed(targetType string) bool {
+	if d.failedRules == nil {
+		return false
+	}
+	key := string(d.agentType) + ":" + targetType
+	expiry, ok := d.failedRules[key]
+	if !ok {
+		return false
+	}
+	if time.Now().After(expiry) {
+		delete(d.failedRules, key)
+		return false
+	}
+	return true
+}
+
+// SetActiveAgents updates the count of currently active delegated agents.
+func (d *DelegationStrategy) SetActiveAgents(count int) {
+	d.activeAgents = count
+}
+
+// AdaptiveMaxTurns returns the maximum turns for a delegated agent,
+// reducing turns for deeper delegation chains.
+func (d *DelegationStrategy) AdaptiveMaxTurns(baseTurns int) int {
+	adapted := baseTurns - (d.currentDepth * 3)
+	if adapted < 5 {
+		adapted = 5
+	}
+	return adapted
+}
+
 // Evaluate checks if delegation should occur based on current state.
 // Uses StrategyOptimizer to prefer agents with higher historical success rates.
 func (d *DelegationStrategy) Evaluate(ctx *DelegationContext) *DelegationDecision {
@@ -135,9 +179,19 @@ func (d *DelegationStrategy) Evaluate(ctx *DelegationContext) *DelegationDecisio
 		}
 	}
 
-	if len(matchingDecisions) == 0 {
+	// Filter out suppressed rules
+	var activeDecisions []*DelegationDecision
+	for _, dec := range matchingDecisions {
+		if !d.isRuleSuppressed(dec.TargetType) {
+			activeDecisions = append(activeDecisions, dec)
+		}
+	}
+
+	if len(activeDecisions) == 0 {
 		return &DelegationDecision{ShouldDelegate: false}
 	}
+
+	matchingDecisions = activeDecisions
 
 	// If only one match, return it
 	if len(matchingDecisions) == 1 {
@@ -214,7 +268,16 @@ func (d *DelegationStrategy) calculateDelegationScore(targetType string) float64
 		combinedRate := (baseRate*0.4 + historicalRate*0.6) * weight
 		trendBonus := trend * 0.1
 
-		return combinedRate + trendBonus
+		score := combinedRate + trendBonus
+
+		// Apply load factor adjustment
+		loadFactor := float64(d.activeAgents) / 5.0 // Normalize to 0-1
+		if loadFactor > 1.0 {
+			loadFactor = 1.0
+		}
+		score = score * (1.0 - loadFactor*0.3)
+
+		return score
 	}
 
 	return baseRate

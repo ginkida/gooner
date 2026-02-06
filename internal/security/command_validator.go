@@ -11,6 +11,8 @@ import (
 type CommandValidator struct {
 	// blockedPatterns are regex patterns that should never be allowed
 	blockedPatterns []*regexp.Regexp
+	// cautionPatterns are patterns that are suspicious but not outright blocked
+	cautionPatterns []*regexp.Regexp
 	// blockedCommands are exact command strings that are blocked
 	blockedCommands []string
 	// blockedSubstrings are substrings that indicate dangerous commands
@@ -143,17 +145,22 @@ func NewCommandValidator() *CommandValidator {
 		regexp.MustCompile(`LD_PRELOAD.*\.so`),
 
 		// Obfuscated commands (hex/octal escapes)
-		regexp.MustCompile(`\\x[0-9a-fA-F]{2}`),                // \xXX
 		regexp.MustCompile(`\\[0-7]{3}`),                       // \OOO
 		regexp.MustCompile(`(?i)printf\s+.*\\`),                // printf with escapes
 
 		// Shell injection separators and constructs
 		regexp.MustCompile(`[;&|]\s*(ba)?sh`),                 // ;sh, |sh, &sh
-		regexp.MustCompile(`\$\(\s*.*\s*\)`),                   // $( ... ) command substitution with spaces
-		regexp.MustCompile("`[^`]*`"),                          // `...` backticks substitution
-		regexp.MustCompile(`\$\{[^}]+\}`),                      // ${...} parameter expansion (can be dangerous)
-		regexp.MustCompile(`(?i)eval\s+`),                      // eval (broad match)
+		regexp.MustCompile(`(?i)eval\s+.*(base64|curl|wget|nc\b)`), // eval with known-dangerous commands
 		regexp.MustCompile(`>\s*/dev/(tcp|udp)/`),              // redundant but safer with separators
+	}
+
+	// Caution patterns: suspicious but not outright blocked.
+	// These are checked only by ValidateWithLevel() for elevated permission prompts.
+	cv.cautionPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`\\x[0-9a-fA-F]{2}`),   // \xXX hex escapes
+		regexp.MustCompile(`\$\(\s*.*\s*\)`),       // $( ... ) command substitution
+		regexp.MustCompile("`[^`]*`"),               // `...` backtick substitution
+		regexp.MustCompile(`\$\{[^}]+\}`),           // ${...} parameter expansion
 	}
 
 	return cv
@@ -216,6 +223,29 @@ func (cv *CommandValidator) Validate(command string) ValidationResult {
 		Valid:  true,
 		Reason: "command passed validation",
 	}
+}
+
+// ValidateWithLevel checks a command and returns validation result with safety level.
+// The level is one of: "blocked", "caution", or "safe".
+func (cv *CommandValidator) ValidateWithLevel(command string) (ValidationResult, string) {
+	result := cv.Validate(command)
+	if !result.Valid {
+		return result, "blocked"
+	}
+
+	// Check caution patterns
+	normalized := strings.ToLower(command)
+	for _, pattern := range cv.cautionPatterns {
+		if pattern.MatchString(normalized) || pattern.MatchString(command) {
+			return ValidationResult{
+				Valid:   true,
+				Reason:  "command contains potentially dangerous constructs",
+				Pattern: pattern.String(),
+			}, "caution"
+		}
+	}
+
+	return result, "safe"
 }
 
 // AddBlockedCommand adds a command to the blocklist.

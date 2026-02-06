@@ -12,9 +12,9 @@ func renderPlanProgress(planProgress *PlanProgressMsg, width int, mutedStyle lip
 		return ""
 	}
 
-	progressIcon := "◐"
+	progressIcon := "→"
 	if planProgress.Status == "completed" {
-		progressIcon = "●"
+		progressIcon = "✓"
 	} else if planProgress.Status == "failed" {
 		progressIcon = "✗"
 	}

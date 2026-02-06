@@ -1,8 +1,11 @@
 package app
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -157,8 +160,9 @@ type App struct {
 	searchCache     *cache.SearchCache
 	rateLimiter     *ratelimit.Limiter
 	auditLogger     *audit.Logger
-	fileWatcher     *watcher.Watcher
-	semanticIndexer *semantic.EnhancedIndexer
+	fileWatcher       *watcher.Watcher
+	semanticIndexer   *semantic.EnhancedIndexer
+	backgroundIndexer *semantic.BackgroundIndexer
 
 	// Task router for intelligent task routing
 	taskRouter *router.Router
@@ -187,6 +191,14 @@ type App struct {
 	// Streaming token estimation
 	streamedChars int // Accumulated chars during current streaming session
 
+	// === Task 5.7: Project Context Auto-Injection ===
+	detectedProjectContext string // Computed once at startup
+
+	// === Task 5.8: Tool Usage Pattern Learning ===
+	toolPatterns []toolPattern // Detected repeating tool sequences
+	recentTools  []string      // Last 20 tool names used
+	messageCount int           // Total messages processed (for periodic hint injection)
+
 	mu         sync.Mutex
 	running    bool
 	processing bool // Guards against concurrent message processing
@@ -201,6 +213,271 @@ type App struct {
 	// Pending message queue
 	pendingMessage string
 	pendingMu      sync.Mutex
+}
+
+// toolPattern represents a detected repeating tool usage sequence.
+type toolPattern struct {
+	sequence []string // e.g., ["read", "grep", "edit"]
+	count    int
+}
+
+// detectProjectContext scans the working directory for project markers, framework info,
+// and documentation files. Returns a string describing the detected project context.
+// This is called once at startup and cached in detectedProjectContext.
+func (a *App) detectProjectContext() string {
+	var parts []string
+
+	// Detect project type from marker files
+	projectType := ""
+	goModPath := filepath.Join(a.workDir, "go.mod")
+	packageJSONPath := filepath.Join(a.workDir, "package.json")
+	pyprojectPath := filepath.Join(a.workDir, "pyproject.toml")
+	setupPyPath := filepath.Join(a.workDir, "setup.py")
+	cargoTomlPath := filepath.Join(a.workDir, "Cargo.toml")
+
+	switch {
+	case fileExists(goModPath):
+		projectType = "Go project"
+		if info := a.extractGoModInfo(goModPath); info != "" {
+			parts = append(parts, info)
+		}
+	case fileExists(packageJSONPath):
+		projectType = "Node.js project"
+		if info := a.extractPackageJSONInfo(packageJSONPath); info != "" {
+			parts = append(parts, info)
+		}
+	case fileExists(pyprojectPath):
+		projectType = "Python project"
+		if info := a.readFirstLines(pyprojectPath, 10); info != "" {
+			parts = append(parts, "pyproject.toml excerpt:\n"+info)
+		}
+	case fileExists(setupPyPath):
+		projectType = "Python project"
+		if info := a.readFirstLines(setupPyPath, 10); info != "" {
+			parts = append(parts, "setup.py excerpt:\n"+info)
+		}
+	case fileExists(cargoTomlPath):
+		projectType = "Rust project"
+		if info := a.readFirstLines(cargoTomlPath, 10); info != "" {
+			parts = append(parts, "Cargo.toml excerpt:\n"+info)
+		}
+	}
+
+	if projectType != "" {
+		parts = append([]string{"Detected project type: " + projectType}, parts...)
+	}
+
+	// Scan for documentation files and read first 500 chars of each
+	docFiles := []string{"README.md", "ARCHITECTURE.md", "CONTRIBUTING.md"}
+	for _, docFile := range docFiles {
+		docPath := filepath.Join(a.workDir, docFile)
+		if fileExists(docPath) {
+			content := readFileHead(docPath, 500)
+			if content != "" {
+				parts = append(parts, fmt.Sprintf("%s (first 500 chars):\n%s", docFile, content))
+			}
+		}
+	}
+
+	return strings.Join(parts, "\n\n")
+}
+
+// extractGoModInfo reads go.mod and extracts module name and key dependencies.
+func (a *App) extractGoModInfo(goModPath string) string {
+	f, err := os.Open(goModPath)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	var moduleName string
+	var deps []string
+	knownFrameworks := map[string]string{
+		"github.com/labstack/echo":   "Echo",
+		"github.com/gin-gonic/gin":   "Gin",
+		"github.com/gofiber/fiber":   "Fiber",
+		"github.com/gorilla/mux":     "Gorilla Mux",
+		"github.com/go-chi/chi":      "Chi",
+		"google.golang.org/grpc":     "gRPC",
+		"github.com/spf13/cobra":     "Cobra CLI",
+		"github.com/spf13/viper":     "Viper",
+		"gorm.io/gorm":               "GORM",
+		"github.com/jmoiron/sqlx":    "sqlx",
+		"github.com/charmbracelet/bubbletea": "Bubble Tea TUI",
+	}
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "module ") {
+			moduleName = strings.TrimPrefix(line, "module ")
+		}
+		// Check for known framework dependencies in require blocks
+		for prefix, name := range knownFrameworks {
+			if strings.Contains(line, prefix) {
+				deps = append(deps, name)
+			}
+		}
+	}
+
+	var info []string
+	if moduleName != "" {
+		info = append(info, "Module: "+moduleName)
+	}
+	if len(deps) > 0 {
+		info = append(info, "Key frameworks: "+strings.Join(deps, ", "))
+	}
+	return strings.Join(info, "\n")
+}
+
+// extractPackageJSONInfo reads package.json and extracts name and key dependencies.
+func (a *App) extractPackageJSONInfo(packageJSONPath string) string {
+	content := readFileHead(packageJSONPath, 2000)
+	if content == "" {
+		return ""
+	}
+	// Simple extraction without full JSON parsing to avoid importing encoding/json
+	var info []string
+
+	// Extract "name"
+	if idx := strings.Index(content, `"name"`); idx >= 0 {
+		rest := content[idx:]
+		if colonIdx := strings.Index(rest, ":"); colonIdx >= 0 {
+			rest = rest[colonIdx+1:]
+			rest = strings.TrimSpace(rest)
+			if len(rest) > 0 && rest[0] == '"' {
+				endQuote := strings.Index(rest[1:], `"`)
+				if endQuote >= 0 {
+					info = append(info, "Package: "+rest[1:endQuote+1])
+				}
+			}
+		}
+	}
+
+	// Check for key frameworks in dependencies
+	knownDeps := []string{"react", "vue", "angular", "svelte", "next", "express", "nestjs", "fastify", "nuxt"}
+	var found []string
+	for _, dep := range knownDeps {
+		if strings.Contains(content, `"`+dep+`"`) {
+			found = append(found, dep)
+		}
+	}
+	if len(found) > 0 {
+		info = append(info, "Key frameworks: "+strings.Join(found, ", "))
+	}
+
+	return strings.Join(info, "\n")
+}
+
+// readFirstLines reads the first N lines of a file and returns them as a string.
+func (a *App) readFirstLines(filePath string, n int) string {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	for i := 0; i < n && scanner.Scan(); i++ {
+		lines = append(lines, scanner.Text())
+	}
+	return strings.Join(lines, "\n")
+}
+
+// fileExists checks if a file exists.
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// readFileHead reads the first maxChars characters from a file.
+func readFileHead(path string, maxChars int) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	content := string(data)
+	if len(content) > maxChars {
+		content = content[:maxChars]
+	}
+	return content
+}
+
+// detectPatterns scans recentTools for repeating subsequences of length 2-4.
+// Returns pattern descriptions like "You often follow read -> grep -> edit".
+func (a *App) detectPatterns() []string {
+	a.mu.Lock()
+	recent := make([]string, len(a.recentTools))
+	copy(recent, a.recentTools)
+	a.mu.Unlock()
+
+	if len(recent) < 4 {
+		return nil
+	}
+
+	// Count subsequences of length 2-4
+	counts := make(map[string]int)
+	for seqLen := 2; seqLen <= 4; seqLen++ {
+		for i := 0; i <= len(recent)-seqLen; i++ {
+			key := strings.Join(recent[i:i+seqLen], "->")
+			counts[key]++
+		}
+	}
+
+	// Update toolPatterns and collect descriptions
+	var patterns []toolPattern
+	var descriptions []string
+	for key, count := range counts {
+		if count >= 3 {
+			seq := strings.Split(key, "->")
+			patterns = append(patterns, toolPattern{sequence: seq, count: count})
+			descriptions = append(descriptions, fmt.Sprintf("You often follow %s (seen %d times)", strings.Join(seq, " -> "), count))
+		}
+	}
+
+	a.mu.Lock()
+	a.toolPatterns = patterns
+	a.mu.Unlock()
+
+	return descriptions
+}
+
+// getToolHints generates hints based on detected tool usage patterns.
+// Returns hints only if patterns have count >= 3.
+func (a *App) getToolHints() string {
+	descriptions := a.detectPatterns()
+	if len(descriptions) == 0 {
+		return ""
+	}
+
+	var hints []string
+	hints = append(hints, "Based on tool usage patterns observed in this session:")
+	for _, desc := range descriptions {
+		hints = append(hints, "- "+desc)
+	}
+
+	// Add general hints based on specific patterns
+	a.mu.Lock()
+	for _, p := range a.toolPatterns {
+		if len(p.sequence) >= 2 && p.sequence[0] == "read" && p.count >= 3 {
+			hints = append(hints, "- Consider using parallel reads for multiple files")
+			break
+		}
+	}
+	a.mu.Unlock()
+
+	return strings.Join(hints, "\n")
+}
+
+// recordToolUsage appends a tool name to recentTools, keeping only the last 20.
+func (a *App) recordToolUsage(name string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.recentTools = append(a.recentTools, name)
+	if len(a.recentTools) > 20 {
+		a.recentTools = a.recentTools[len(a.recentTools)-20:]
+	}
 }
 
 // New creates a new application instance.
@@ -224,6 +501,13 @@ func (a *App) Run() error {
 	} else {
 		// Disable logging if no config dir or level not set
 		logging.DisableLogging()
+	}
+
+	// === Task 5.7: Detect project context once at startup ===
+	a.detectedProjectContext = a.detectProjectContext()
+	if a.detectedProjectContext != "" && a.promptBuilder != nil {
+		a.promptBuilder.SetDetectedContext(a.detectedProjectContext)
+		logging.Debug("project context auto-detected", "length", len(a.detectedProjectContext))
 	}
 
 	// Run on_start hooks with proper context
@@ -360,7 +644,14 @@ func (a *App) Run() error {
 		}
 	}
 
-	// Start background indexing for semantic search if enabled
+	// Start background semantic indexer (watcher-driven incremental indexing)
+	if a.backgroundIndexer != nil {
+		if err := a.backgroundIndexer.Start(); err != nil {
+			logging.Warn("failed to start background semantic indexer", "error", err)
+		}
+	}
+
+	// Start initial indexing for semantic search if enabled
 	if a.semanticIndexer != nil && a.config.Semantic.IndexOnStart {
 		go func() {
 			logging.Debug("starting background semantic indexing")
@@ -514,7 +805,18 @@ func (a *App) processMessageWithContext(ctx context.Context, message string) {
 	a.responseStartTime = time.Now()
 	a.responseToolsUsed = nil
 	a.streamedChars = 0 // Reset streaming accumulator
+	a.messageCount++
+	currentMsgCount := a.messageCount
 	a.mu.Unlock()
+
+	// === Task 5.8: Inject tool hints every 10 messages ===
+	if currentMsgCount > 0 && currentMsgCount%10 == 0 && a.promptBuilder != nil {
+		hints := a.getToolHints()
+		a.promptBuilder.SetToolHints(hints)
+		if hints != "" {
+			logging.Debug("tool hints injected", "message_count", currentMsgCount, "hints_length", len(hints))
+		}
+	}
 
 	// Prepare context (check tokens, optimize if needed)
 	if a.contextManager != nil {
@@ -1121,33 +1423,7 @@ func (a *App) executePlanDelegated(ctx context.Context, approvedPlan *plan.Plan)
 
 // isRetryableError checks if an error is retryable (network, timeout, rate limit).
 func isRetryableError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	retryable := []string{
-		"deadline exceeded",
-		"timeout",
-		"connection refused",
-		"connection reset",
-		"temporary failure",
-		"rate limit",
-		"503",
-		"502",
-		"429",
-		"network",
-		"eof",
-		"context canceled",
-		"i/o timeout",
-		"no such host",
-		"tls handshake",
-	}
-	for _, pattern := range retryable {
-		if strings.Contains(msg, pattern) {
-			return true
-		}
-	}
-	return false
+	return client.IsRetryableError(err)
 }
 
 // buildStepPrompt constructs the prompt for a single plan step sub-agent.

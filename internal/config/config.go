@@ -173,6 +173,12 @@ type ModelConfig struct {
 	// Extended Thinking (Anthropic API feature)
 	EnableThinking bool  `yaml:"enable_thinking"` // Enable extended thinking mode
 	ThinkingBudget int32 `yaml:"thinking_budget"` // Max tokens for thinking (0 = disabled)
+
+	// Fallback providers to try when the primary provider fails
+	FallbackProviders []string `yaml:"fallback_providers"`
+
+	// Maximum number of clients kept in the connection pool (default: 5)
+	MaxPoolSize int `yaml:"max_pool_size"`
 }
 
 // ToolsConfig holds tool-related settings.
@@ -198,6 +204,7 @@ type UIConfig struct {
 	Theme             string `yaml:"theme"`         // Theme name: dark, light, sepia, cyber, forest, ocean, monokai, dracula, high_contrast
 	ShowWelcome       bool   `yaml:"show_welcome"`  // Show welcome message on first launch
 	HintsEnabled      bool   `yaml:"hints_enabled"` // Show contextual hints for features
+	CompactMode       bool   `yaml:"compact_mode"`
 }
 
 // ContextConfig holds context management settings.
@@ -206,6 +213,7 @@ type ContextConfig struct {
 	WarningThreshold   float64 `yaml:"warning_threshold"`     // 0.8 = warn at 80%
 	SummarizationRatio float64 `yaml:"summarization_ratio"`   // 0.5 = summarize to 50%
 	ToolResultMaxChars int     `yaml:"tool_result_max_chars"` // Max chars for tool results
+	AutoCompactThreshold float64 `yaml:"auto_compact_threshold"` // 0.75 = compact at 75% usage
 	EnableAutoSummary  bool    `yaml:"enable_auto_summary"`   // Enable auto-summarization
 }
 
@@ -237,11 +245,14 @@ type HooksConfig struct {
 
 // HookConfig represents a single hook configuration.
 type HookConfig struct {
-	Name     string `yaml:"name"`      // Human-readable name
-	Type     string `yaml:"type"`      // Hook type: pre_tool, post_tool, on_error, on_start, on_exit
-	ToolName string `yaml:"tool_name"` // Tool to trigger on (empty = all)
-	Command  string `yaml:"command"`   // Shell command to execute
-	Enabled  bool   `yaml:"enabled"`   // Whether hook is active
+	Name        string `yaml:"name"`          // Human-readable name
+	Type        string `yaml:"type"`          // Hook type: pre_tool, post_tool, on_error, on_start, on_exit
+	ToolName    string `yaml:"tool_name"`     // Tool to trigger on (empty = all)
+	Command     string `yaml:"command"`       // Shell command to execute
+	Enabled     bool   `yaml:"enabled"`       // Whether hook is active
+	Condition   string `yaml:"condition"`     // Condition: always, if_previous_success, if_previous_failure
+	FailOnError bool   `yaml:"fail_on_error"` // When true and hook fails, cancel tool execution
+	DependsOn   string `yaml:"depends_on"`    // Name of another hook that must complete first
 }
 
 // WebConfig holds web tool settings.
@@ -384,6 +395,7 @@ func DefaultConfig() *Config {
 			MaxOutputTokens: 8192,
 			EnableThinking:  false, // Disabled by default
 			ThinkingBudget:  0,     // 0 = disabled
+			MaxPoolSize:     5,     // Default pool size
 		},
 		Tools: ToolsConfig{
 			Timeout: 2 * time.Minute,

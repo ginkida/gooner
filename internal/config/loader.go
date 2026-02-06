@@ -11,10 +11,11 @@ import (
 )
 
 // Load loads configuration from file and environment variables.
+// It merges global config with per-project config (.gokin/config.yaml) if present.
 func Load() (*Config, error) {
 	cfg := DefaultConfig()
 
-	// Try to load from config file
+	// Try to load from global config file
 	configPath := getConfigPath()
 	if configPath != "" {
 		if err := loadFromFile(cfg, configPath); err != nil {
@@ -28,7 +29,52 @@ func Load() (*Config, error) {
 	// Override with environment variables
 	loadFromEnv(cfg)
 
+	// Merge per-project config if it exists
+	loadProjectConfig(cfg)
+
 	return cfg, nil
+}
+
+// LoadWithProjectDir loads configuration with a specific project directory.
+func LoadWithProjectDir(projectDir string) (*Config, error) {
+	cfg, err := Load()
+	if err != nil {
+		return nil, err
+	}
+
+	// Load project-specific config
+	projectConfigPath := filepath.Join(projectDir, ".gokin", "config.yaml")
+	if err := loadFromFile(cfg, projectConfigPath); err != nil {
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("failed to load project config: %w", err)
+		}
+	}
+
+	return cfg, nil
+}
+
+// loadProjectConfig attempts to find and load .gokin/config.yaml from the current directory upward.
+func loadProjectConfig(cfg *Config) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return
+	}
+
+	// Walk up to find .gokin/config.yaml
+	for {
+		projectConfig := filepath.Join(dir, ".gokin", "config.yaml")
+		if _, err := os.Stat(projectConfig); err == nil {
+			// Found project config, merge it
+			_ = loadFromFile(cfg, projectConfig)
+			return
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break // reached root
+		}
+		dir = parent
+	}
 }
 
 // getConfigPath returns the path to the config file.

@@ -47,9 +47,16 @@ func NewGeminiOAuthManager() *OAuthManager {
 // The user should be directed to this URL to authenticate.
 func (m *OAuthManager) GenerateAuthURL() (string, error) {
 	// Generate PKCE parameters
-	m.codeVerifier = generateCodeVerifier()
+	var err error
+	m.codeVerifier, err = generateCodeVerifier()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate code verifier: %w", err)
+	}
 	m.codeChallenge = generateCodeChallenge(m.codeVerifier)
-	m.state = generateState()
+	m.state, err = generateState()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate state: %w", err)
+	}
 
 	params := url.Values{
 		"client_id":             {m.clientID},

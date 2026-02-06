@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"gokin/internal/logging"
 	"gokin/internal/tools"
@@ -14,7 +15,15 @@ type Manager struct {
 	servers map[string]*ServerConfig // Server configurations
 	clients map[string]*Client       // Active client connections
 	tools   []tools.Tool             // All registered tools from all servers
+	health  map[string]*ServerHealth
 	mu      sync.RWMutex
+}
+
+// ServerHealth tracks health status of an MCP server.
+type ServerHealth struct {
+	Healthy          bool
+	LastCheck        time.Time
+	ConsecutiveFails int
 }
 
 // NewManager creates a new MCP manager.
@@ -23,6 +32,7 @@ func NewManager(servers []*ServerConfig) *Manager {
 		servers: make(map[string]*ServerConfig),
 		clients: make(map[string]*Client),
 		tools:   make([]tools.Tool, 0),
+		health:  make(map[string]*ServerHealth),
 	}
 
 	for _, cfg := range servers {
@@ -248,10 +258,51 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	return lastErr
 }
 
+// CheckHealth checks the health of all connected servers.
+func (m *Manager) CheckHealth(ctx context.Context) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for name, client := range m.clients {
+		fails := client.ConsecutiveFails()
+
+		h, ok := m.health[name]
+		if !ok {
+			h = &ServerHealth{Healthy: true}
+			m.health[name] = h
+		}
+
+		h.ConsecutiveFails = fails
+		h.LastCheck = time.Now()
+
+		if fails >= 3 {
+			if h.Healthy {
+				logging.Warn("MCP server marked unhealthy", "name", name, "fails", fails)
+			}
+			h.Healthy = false
+		} else {
+			h.Healthy = true
+		}
+	}
+}
+
+// IsHealthy returns whether a server is healthy.
+func (m *Manager) IsHealthy(name string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	h, ok := m.health[name]
+	if !ok {
+		return true // Unknown servers are considered healthy
+	}
+	return h.Healthy
+}
+
 // ServerStatus contains status information about an MCP server.
 type ServerStatus struct {
 	Name        string
 	Connected   bool
+	Healthy     bool
 	ServerInfo  *ServerInfo
 	ToolCount   int
 	ToolNames   []string
@@ -272,6 +323,11 @@ func (m *Manager) GetServerStatus() []*ServerStatus {
 
 		if client, ok := m.clients[name]; ok {
 			status.Connected = true
+			if h, ok := m.health[name]; ok {
+				status.Healthy = h.Healthy
+			} else {
+				status.Healthy = true
+			}
 			status.ServerInfo = client.GetServerInfo()
 
 			// Count tools from this server
@@ -283,6 +339,8 @@ func (m *Manager) GetServerStatus() []*ServerStatus {
 					}
 				}
 			}
+		} else {
+			status.Healthy = false
 		}
 
 		// Use config name if server info not available

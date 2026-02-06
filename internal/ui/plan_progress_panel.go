@@ -427,9 +427,10 @@ func (p *PlanProgressPanel) View(width int) string {
 	return content.String()
 }
 
-// renderStep renders a single step with status icon.
+// renderStep renders a single step with tree-style status icon.
+// Uses symbols: "✓" (completed), "→" (in progress), "○" (pending), "✗" (failed), "⊘" (skipped).
 func (p *PlanProgressPanel) renderStep(step PlanStepState, maxWidth int) string {
-	// Status icon with animation for in-progress
+	// Status icon matching the plan tree view conventions
 	var icon string
 	var iconStyle lipgloss.Style
 
@@ -438,9 +439,7 @@ func (p *PlanProgressPanel) renderStep(step PlanStepState, maxWidth int) string 
 		icon = "○"
 		iconStyle = lipgloss.NewStyle().Foreground(ColorDim)
 	case PlanStepInProgress:
-		// Animated spinner
-		spinners := []string{"◐", "◓", "◑", "◒"}
-		icon = spinners[p.frame%len(spinners)]
+		icon = "→"
 		iconStyle = lipgloss.NewStyle().Foreground(ColorWarning).Bold(true)
 	case PlanStepCompleted:
 		icon = "✓"
@@ -449,7 +448,7 @@ func (p *PlanProgressPanel) renderStep(step PlanStepState, maxWidth int) string 
 		icon = "✗"
 		iconStyle = lipgloss.NewStyle().Foreground(ColorError)
 	case PlanStepSkipped:
-		icon = "↷"
+		icon = "⊘"
 		iconStyle = lipgloss.NewStyle().Foreground(ColorMuted)
 	}
 
@@ -461,7 +460,7 @@ func (p *PlanProgressPanel) renderStep(step PlanStepState, maxWidth int) string 
 		titleStyle = lipgloss.NewStyle().Foreground(ColorDim)
 	}
 
-	title := step.Title
+	title := fmt.Sprintf("Step %d: %s", step.ID, step.Title)
 	maxTitleWidth := maxWidth - 5 // icon + space + padding
 
 	// Add duration for completed/failed steps
@@ -474,11 +473,24 @@ func (p *PlanProgressPanel) renderStep(step PlanStepState, maxWidth int) string 
 		}
 	}
 
+	// Add "(in progress)" suffix for in-progress steps
+	statusSuffix := ""
+	if step.Status == PlanStepInProgress {
+		statusSuffix = " " + lipgloss.NewStyle().Foreground(ColorWarning).Italic(true).Render("(in progress)")
+		maxTitleWidth -= lipgloss.Width(statusSuffix)
+	} else if step.Status == PlanStepPending {
+		statusSuffix = " " + lipgloss.NewStyle().Foreground(ColorDim).Italic(true).Render("(pending)")
+		maxTitleWidth -= lipgloss.Width(statusSuffix)
+	}
+
+	if maxTitleWidth < 10 {
+		maxTitleWidth = 10
+	}
 	if len(title) > maxTitleWidth {
 		title = title[:maxTitleWidth-3] + "..."
 	}
 
-	return iconStyle.Render(icon) + " " + titleStyle.Render(title) + durationStr
+	return iconStyle.Render(icon) + " " + titleStyle.Render(title) + statusSuffix + durationStr
 }
 
 // renderProgressBar renders a visual progress bar.
@@ -579,7 +591,7 @@ func (p *PlanProgressPanel) RenderStepNotification(stepID int, status PlanStepSt
 
 	switch status {
 	case PlanStepInProgress:
-		icon = "▶"
+		icon = "→"
 		verb = "Starting"
 		color = ColorWarning
 	case PlanStepCompleted:
@@ -591,7 +603,7 @@ func (p *PlanProgressPanel) RenderStepNotification(stepID int, status PlanStepSt
 		verb = "Failed"
 		color = ColorError
 	case PlanStepSkipped:
-		icon = "↷"
+		icon = "⊘"
 		verb = "Skipped"
 		color = ColorMuted
 	default:

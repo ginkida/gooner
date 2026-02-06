@@ -10,8 +10,34 @@ import (
 	"gokin/internal/security"
 )
 
+// globalPool is the shared client connection pool.
+var globalPool *ClientPool
+
+// GetPool returns the global client connection pool, creating it if necessary.
+func GetPool(cfg *config.Config) *ClientPool {
+	if globalPool == nil {
+		maxSize := cfg.Model.MaxPoolSize
+		if maxSize <= 0 {
+			maxSize = DefaultMaxPoolSize
+		}
+		globalPool = NewClientPool(maxSize)
+	}
+	return globalPool
+}
+
+// ClosePool closes the global client connection pool.
+func ClosePool() {
+	if globalPool != nil {
+		globalPool.Close()
+		globalPool = nil
+	}
+}
+
 // NewClient creates a client based on the configuration and model provider.
 // This is the main entry point for client creation.
+// If FallbackProviders are configured, returns a FallbackClient wrapping
+// clients for the primary provider and each fallback provider.
+// Uses the connection pool to reuse existing clients when possible.
 func NewClient(ctx context.Context, cfg *config.Config, modelID string) (Client, error) {
 	// Migrate configuration to new format
 	config.MigrateConfig(cfg)
@@ -31,12 +57,83 @@ func NewClient(ctx context.Context, cfg *config.Config, modelID string) (Client,
 		"modelID", modelID,
 		"preset", cfg.Model.Preset)
 
-	// Route based on provider field (also check backend for compatibility)
+	// Determine the primary provider
 	provider := cfg.Model.Provider
 	if provider == "" {
 		provider = cfg.API.Backend
 	}
 
+	// If fallback providers are configured, build a FallbackClient
+	if len(cfg.Model.FallbackProviders) > 0 {
+		return newFallbackClientFromConfig(ctx, cfg, provider, modelID)
+	}
+
+	// Single client creation with pool support
+	return getOrCreateClient(ctx, cfg, provider, modelID)
+}
+
+// newFallbackClientFromConfig creates a FallbackClient with the primary provider
+// and each configured fallback provider.
+func newFallbackClientFromConfig(ctx context.Context, cfg *config.Config, primaryProvider, modelID string) (Client, error) {
+	var clients []Client
+
+	// Create the primary client
+	primary, err := getOrCreateClient(ctx, cfg, primaryProvider, modelID)
+	if err != nil {
+		logging.Warn("failed to create primary client, trying fallbacks",
+			"provider", primaryProvider,
+			"error", err.Error())
+	} else {
+		clients = append(clients, primary)
+	}
+
+	// Create fallback clients
+	for _, fbProvider := range cfg.Model.FallbackProviders {
+		fbProvider = strings.TrimSpace(fbProvider)
+		if fbProvider == "" || fbProvider == primaryProvider {
+			continue
+		}
+
+		fbClient, fbErr := getOrCreateClient(ctx, cfg, fbProvider, modelID)
+		if fbErr != nil {
+			logging.Warn("failed to create fallback client",
+				"provider", fbProvider,
+				"error", fbErr.Error())
+			continue
+		}
+		clients = append(clients, fbClient)
+	}
+
+	if len(clients) == 0 {
+		return nil, fmt.Errorf("failed to create any client: primary provider %q and all fallback providers failed", primaryProvider)
+	}
+
+	return NewFallbackClient(clients)
+}
+
+// getOrCreateClient retrieves a client from the pool or creates a new one.
+func getOrCreateClient(ctx context.Context, cfg *config.Config, provider, modelID string) (Client, error) {
+	pool := GetPool(cfg)
+
+	// Check pool first
+	if c, ok := pool.Get(provider, modelID); ok {
+		return c, nil
+	}
+
+	// Create new client
+	c, err := createClientForProvider(ctx, cfg, provider, modelID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store in pool for reuse
+	pool.Put(provider, modelID, c)
+
+	return c, nil
+}
+
+// createClientForProvider creates a new client for the given provider.
+func createClientForProvider(ctx context.Context, cfg *config.Config, provider, modelID string) (Client, error) {
 	switch provider {
 	case "glm":
 		return newGLMClient(cfg, modelID)
@@ -55,43 +152,48 @@ func NewClient(ctx context.Context, cfg *config.Config, modelID string) (Client,
 		return newOllamaClient(cfg, modelID)
 	default:
 		// Fallback to auto-detection from model name
-		logging.Debug("unknown provider, auto-detecting from model name", "modelID", modelID)
-
-		// Check GLM models first
-		if strings.HasPrefix(modelID, "glm") {
-			return newGLMClient(cfg, modelID)
-		}
-
-		// Check Claude models
-		if strings.HasPrefix(modelID, "claude") {
-			return newAnthropicClientForModelID(cfg, modelID)
-		}
-
-		// Check DeepSeek models (API, not Ollama)
-		modelLower := strings.ToLower(modelID)
-		if strings.HasPrefix(modelLower, "deepseek") {
-			return newDeepSeekClient(cfg, modelID)
-		}
-
-		// Check common open-source model prefixes (typically run via Ollama)
-		ollamaPrefixes := []string{
-			"llama", "qwen", "codellama", "mistral", "phi", "gemma",
-			"vicuna", "yi", "starcoder", "wizardcoder", "orca", "neural", "solar",
-			"openchat", "zephyr", "dolphin", "nous", "tinyllama", "stablelm",
-		}
-		for _, prefix := range ollamaPrefixes {
-			if strings.HasPrefix(modelLower, prefix) {
-				return newOllamaClient(cfg, modelID)
-			}
-		}
-
-		// Default to Gemini (check OAuth first)
-		if cfg.API.HasOAuthToken("gemini") {
-			logging.Debug("using Gemini OAuth client (default)", "email", cfg.API.GeminiOAuth.Email)
-			return NewGeminiOAuthClient(ctx, cfg)
-		}
-		return NewGeminiClient(ctx, cfg)
+		return autoDetectClient(ctx, cfg, modelID)
 	}
+}
+
+// autoDetectClient attempts to create a client by detecting the provider from the model name.
+func autoDetectClient(ctx context.Context, cfg *config.Config, modelID string) (Client, error) {
+	logging.Debug("unknown provider, auto-detecting from model name", "modelID", modelID)
+
+	// Check GLM models first
+	if strings.HasPrefix(modelID, "glm") {
+		return newGLMClient(cfg, modelID)
+	}
+
+	// Check Claude models
+	if strings.HasPrefix(modelID, "claude") {
+		return newAnthropicClientForModelID(cfg, modelID)
+	}
+
+	// Check DeepSeek models (API, not Ollama)
+	modelLower := strings.ToLower(modelID)
+	if strings.HasPrefix(modelLower, "deepseek") {
+		return newDeepSeekClient(cfg, modelID)
+	}
+
+	// Check common open-source model prefixes (typically run via Ollama)
+	ollamaPrefixes := []string{
+		"llama", "qwen", "codellama", "mistral", "phi", "gemma",
+		"vicuna", "yi", "starcoder", "wizardcoder", "orca", "neural", "solar",
+		"openchat", "zephyr", "dolphin", "nous", "tinyllama", "stablelm",
+	}
+	for _, prefix := range ollamaPrefixes {
+		if strings.HasPrefix(modelLower, prefix) {
+			return newOllamaClient(cfg, modelID)
+		}
+	}
+
+	// Default to Gemini (check OAuth first)
+	if cfg.API.HasOAuthToken("gemini") {
+		logging.Debug("using Gemini OAuth client (default)", "email", cfg.API.GeminiOAuth.Email)
+		return NewGeminiOAuthClient(ctx, cfg)
+	}
+	return NewGeminiClient(ctx, cfg)
 }
 
 // newGLMClient creates a GLM (GLM-4.7) client using Anthropic-compatible API.

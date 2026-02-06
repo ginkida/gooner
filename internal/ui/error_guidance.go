@@ -101,6 +101,72 @@ var errorGuidancePatterns = []ErrorGuidance{
 		Suggestions: []string{"Your request was flagged by content filters", "Rephrase your request", "Review content guidelines"},
 		Command:     "",
 	},
+	// Go-specific errors
+	{
+		Pattern:     regexp.MustCompile(`(?i)(undefined:|cannot refer to unexported|imported and not used|declared and not used)`),
+		Title:       "Go Compilation Error",
+		Suggestions: []string{"Check for typos in variable/function names", "Ensure all imports are used", "Remove unused variables or use _ placeholder"},
+		Command:     "",
+	},
+	{
+		Pattern:     regexp.MustCompile(`(?i)(cannot use .* as .* in|incompatible type|type mismatch)`),
+		Title:       "Go Type Error",
+		Suggestions: []string{"Check type assertions and conversions", "Verify function signatures match expected types", "Use explicit type conversion if needed"},
+		Command:     "",
+	},
+	{
+		Pattern:     regexp.MustCompile(`(?i)(go\.mod.*requires|module .* found .* but does not contain|no required module provides)`),
+		Title:       "Go Module Error",
+		Suggestions: []string{"Run 'go mod tidy' to fix dependencies", "Check go.mod for correct module path", "Run 'go get <package>' to add missing dependency"},
+		Command:     "",
+	},
+	// Python-specific errors
+	{
+		Pattern:     regexp.MustCompile(`(?i)(ModuleNotFoundError|ImportError|No module named)`),
+		Title:       "Python Import Error",
+		Suggestions: []string{"Install the missing package with pip", "Check virtual environment is activated", "Verify the module name is spelled correctly"},
+		Command:     "",
+	},
+	{
+		Pattern:     regexp.MustCompile(`(?i)(IndentationError|TabError|unexpected indent)`),
+		Title:       "Python Indentation Error",
+		Suggestions: []string{"Check for mixed tabs and spaces", "Use consistent indentation (4 spaces recommended)", "Run your editor's auto-format"},
+		Command:     "",
+	},
+	// Node.js-specific errors
+	{
+		Pattern:     regexp.MustCompile(`(?i)(Cannot find module|MODULE_NOT_FOUND|ERR_MODULE_NOT_FOUND)`),
+		Title:       "Node Module Not Found",
+		Suggestions: []string{"Run 'npm install' to install dependencies", "Check package.json for the module", "Verify the import path is correct"},
+		Command:     "",
+	},
+	{
+		Pattern:     regexp.MustCompile(`(?i)(ENOSPC|no space left|disk quota exceeded)`),
+		Title:       "Disk Space Error",
+		Suggestions: []string{"Free up disk space", "Clean build caches and node_modules", "Check disk usage with 'df -h'"},
+		Command:     "",
+	},
+	// Docker errors
+	{
+		Pattern:     regexp.MustCompile(`(?i)(Cannot connect to the Docker daemon|docker.*not running)`),
+		Title:       "Docker Not Running",
+		Suggestions: []string{"Start Docker Desktop or Docker daemon", "Check Docker service status", "Verify Docker installation"},
+		Command:     "",
+	},
+	// Memory errors
+	{
+		Pattern:     regexp.MustCompile(`(?i)(out of memory|OOM|heap.*exhausted|allocation failed)`),
+		Title:       "Out of Memory",
+		Suggestions: []string{"Reduce batch size or data volume", "Increase memory limits", "Check for memory leaks in your code"},
+		Command:     "",
+	},
+	// Port/address errors
+	{
+		Pattern:     regexp.MustCompile(`(?i)(address already in use|EADDRINUSE|port.*already|bind.*failed)`),
+		Title:       "Port Already In Use",
+		Suggestions: []string{"Another process is using this port", "Find the process: lsof -i :<port>", "Use a different port or kill the blocking process"},
+		Command:     "",
+	},
 }
 
 // GetErrorGuidance returns guidance for an error message, or nil if no match.

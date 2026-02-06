@@ -102,6 +102,8 @@ func (m *Manager) GetHooks() []*Hook {
 }
 
 // Run executes all matching hooks for the given type and context.
+// It supports hook chaining (DependsOn), conditions (previousSuccess),
+// output capture (CapturedOutput), and FailOnError cancellation.
 func (m *Manager) Run(ctx context.Context, hookType Type, hctx *Context) []Result {
 	m.mu.RLock()
 	if !m.enabled {
@@ -118,17 +120,35 @@ func (m *Manager) Run(ctx context.Context, hookType Type, hctx *Context) []Resul
 	}
 
 	var results []Result
+	completedHooks := make(map[string]bool)
 
 	for _, hook := range hooks {
 		if !hook.Matches(hookType, hctx.ToolName) {
 			continue
 		}
 
+		if !hook.ShouldRun(hctx, completedHooks) {
+			continue
+		}
+
 		result := m.executeHook(ctx, hook, hctx, timeout)
 		results = append(results, result)
 
+		// Capture output into context for subsequent hooks
+		hctx.CapturedOutput = result.Output
+
+		// Track completed hooks for chaining
+		if hook.Name != "" {
+			completedHooks[hook.Name] = true
+		}
+
 		if handler != nil {
 			handler(hook, result.Output, result.Error)
+		}
+
+		// If FailOnError is set and the hook failed, stop executing further hooks
+		if hook.FailOnError && result.Error != nil {
+			break
 		}
 	}
 

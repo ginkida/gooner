@@ -133,6 +133,18 @@ func (ch *CommandHistory) IsRecent(command string, limit int) bool {
 	return false
 }
 
+// GetTimestamp returns the last usage timestamp for a command.
+// Returns zero time if the command is not found.
+func (ch *CommandHistory) GetTimestamp(command string) time.Time {
+	ch.mu.RLock()
+	defer ch.mu.RUnlock()
+
+	if entry, exists := ch.entries[command]; exists {
+		return entry.Timestamp
+	}
+	return time.Time{}
+}
+
 // pruneOldest removes the oldest entries to stay under the limit.
 func (ch *CommandHistory) pruneOldest() {
 	// Convert to slice for sorting

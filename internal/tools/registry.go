@@ -148,6 +148,11 @@ func DefaultRegistry(workDir string) *Registry {
 	r.MustRegister(NewGitStatusTool(workDir))
 	r.MustRegister(NewGitAddTool(workDir))
 	r.MustRegister(NewGitCommitTool(workDir))
+	r.MustRegister(NewGitBranchTool(workDir))
+	r.MustRegister(NewGitPRTool(workDir))
+
+	// Test runner
+	r.MustRegister(NewRunTestsTool(workDir))
 
 	// SSH tool
 	r.MustRegister(NewSSHTool())
@@ -417,6 +422,11 @@ func DefaultLazyRegistry(workDir string) *LazyRegistry {
 	r.RegisterFactory("git_status", func() Tool { return NewGitStatusTool(workDir) }, declarations["git_status"])
 	r.RegisterFactory("git_add", func() Tool { return NewGitAddTool(workDir) }, declarations["git_add"])
 	r.RegisterFactory("git_commit", func() Tool { return NewGitCommitTool(workDir) }, declarations["git_commit"])
+	r.RegisterFactory("git_branch", func() Tool { return NewGitBranchTool(workDir) }, declarations["git_branch"])
+	r.RegisterFactory("git_pr", func() Tool { return NewGitPRTool(workDir) }, declarations["git_pr"])
+
+	// Test runner
+	r.RegisterFactory("run_tests", func() Tool { return NewRunTestsTool(workDir) }, declarations["run_tests"])
 
 	// Other tools
 	r.RegisterFactory("ssh", func() Tool { return NewSSHTool() }, declarations["ssh"])

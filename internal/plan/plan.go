@@ -70,6 +70,7 @@ type Step struct {
 	EndTime     time.Time `json:"end_time,omitempty"`
 	Parallel    bool      `json:"parallel"` // Can execute in parallel with other steps
 	DependsOn   []int     `json:"depends_on,omitempty"` // Step IDs this step depends on
+	Children    []*Step   `json:"children,omitempty"`    // Nested sub-steps
 }
 
 // Duration returns the step execution duration.
@@ -293,8 +294,15 @@ func (p *Plan) IsComplete() bool {
 	return p.Status == StatusCompleted || p.Status == StatusFailed
 }
 
-// Format returns a formatted string representation of the plan.
+// Format returns a formatted string representation of the plan using tree view.
 func (p *Plan) Format() string {
+	return p.RenderTree()
+}
+
+// RenderTree returns a tree view of the plan with status indicators.
+// Symbols: "✓" (completed), "→" (in progress), "○" (pending), "✗" (failed), "⊘" (skipped).
+// Parallel steps are visually marked with "║" borders.
+func (p *Plan) RenderTree() string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
@@ -307,18 +315,70 @@ func (p *Plan) Format() string {
 	builder.WriteString("\n")
 
 	for _, step := range p.Steps {
-		icon := step.Status.Icon()
-		builder.WriteString(fmt.Sprintf("%s %d. %s\n", icon, step.ID, step.Title))
-		if step.Description != "" {
-			builder.WriteString(fmt.Sprintf("   %s\n", step.Description))
-		}
+		renderStepTree(&builder, step, "")
 	}
 
-	progress := p.Progress()
+	progress := p.progressLocked()
+	completedCount := 0
+	for _, step := range p.Steps {
+		if step.Status == StatusCompleted || step.Status == StatusSkipped {
+			completedCount++
+		}
+	}
 	builder.WriteString(fmt.Sprintf("\nProgress: %.0f%% (%d/%d steps)\n",
-		progress*100, int(progress*float64(len(p.Steps))), len(p.Steps)))
+		progress*100, completedCount, len(p.Steps)))
 
 	return builder.String()
+}
+
+// progressLocked returns the completion progress without acquiring the lock.
+// Caller must hold at least a read lock.
+func (p *Plan) progressLocked() float64 {
+	if len(p.Steps) == 0 {
+		return 0
+	}
+
+	completed := 0
+	for _, step := range p.Steps {
+		if step.Status == StatusCompleted || step.Status == StatusSkipped {
+			completed++
+		}
+	}
+	return float64(completed) / float64(len(p.Steps))
+}
+
+// renderStepTree renders a single step and its children recursively.
+func renderStepTree(builder *strings.Builder, step *Step, indent string) {
+	icon := stepTreeIcon(step.Status)
+
+	if step.Parallel {
+		builder.WriteString(fmt.Sprintf("%s║ %s Step %d: %s  ║  (parallel)\n", indent, icon, step.ID, step.Title))
+	} else {
+		builder.WriteString(fmt.Sprintf("%s%s Step %d: %s\n", indent, icon, step.ID, step.Title))
+	}
+
+	childIndent := indent + "  "
+	for _, child := range step.Children {
+		renderStepTree(builder, child, childIndent)
+	}
+}
+
+// stepTreeIcon returns the tree icon for a given status.
+func stepTreeIcon(s Status) string {
+	switch s {
+	case StatusCompleted:
+		return "✓"
+	case StatusInProgress:
+		return "→"
+	case StatusPending:
+		return "○"
+	case StatusFailed:
+		return "✗"
+	case StatusSkipped:
+		return "⊘"
+	default:
+		return "○"
+	}
 }
 
 // StepCount returns the number of steps.
@@ -337,11 +397,24 @@ func (p *Plan) GetStepsSnapshot() []*Step {
 	snapshot := make([]*Step, len(p.Steps))
 	for i, step := range p.Steps {
 		if step != nil {
-			stepCopy := *step // Deep copy the struct
-			snapshot[i] = &stepCopy
+			snapshot[i] = deepCopyStep(step)
 		}
 	}
 	return snapshot
+}
+
+// deepCopyStep performs a deep copy of a Step, including its Children.
+func deepCopyStep(step *Step) *Step {
+	stepCopy := *step
+	if len(step.Children) > 0 {
+		stepCopy.Children = make([]*Step, len(step.Children))
+		for i, child := range step.Children {
+			if child != nil {
+				stepCopy.Children[i] = deepCopyStep(child)
+			}
+		}
+	}
+	return &stepCopy
 }
 
 // CompletedCount returns the number of completed steps.

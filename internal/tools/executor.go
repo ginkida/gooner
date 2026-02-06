@@ -172,6 +172,9 @@ type Executor struct {
 
 	// Circuit breakers for tools
 	toolBreakers map[string]*robustness.CircuitBreaker
+
+	// Tool result cache
+	toolCache *ToolResultCache
 }
 
 // ExecutionInfo holds information about an active tool execution
@@ -305,6 +308,11 @@ func (e *Executor) SetAuditLogger(logger *audit.Logger) {
 // SetSessionID sets the session ID for audit logging.
 func (e *Executor) SetSessionID(id string) {
 	e.sessionID = id
+}
+
+// SetToolCache sets the tool result cache for caching read-only tool results.
+func (e *Executor) SetToolCache(cache *ToolResultCache) {
+	e.toolCache = cache
 }
 
 // GetNotificationManager returns the notification manager.
@@ -539,6 +547,15 @@ func (e *Executor) executeTools(ctx context.Context, calls []*genai.FunctionCall
 		return results, nil
 	}
 
+	// Check for file dependencies between parallel calls
+	orderedCalls, reordered := orderByDependencies(calls)
+	if reordered {
+		logging.Debug("reordered parallel tool calls for file dependencies",
+			"original_count", len(calls),
+			"reordered_count", len(orderedCalls))
+		calls = orderedCalls
+	}
+
 	// For multiple tools, execute in parallel with semaphore to limit concurrency
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -634,6 +651,11 @@ func (e *Executor) executeTool(ctx context.Context, call *genai.FunctionCall) To
 
 	if err != nil {
 		if errors.Is(err, robustness.ErrCircuitOpen) {
+			// Try self-healing before returning circuit open error
+			if healed := e.trySelfHeal(ctx, call); healed.Success {
+				logging.Info("self-healing succeeded", "tool", call.Name)
+				return healed
+			}
 			return NewErrorResult(fmt.Sprintf("Circuit breaker for '%s' is open. Too many failures. Please wait before trying again.", call.Name))
 		}
 		// If it's not circuit open error, it's the wrapped tool error, which is already in 'result'
@@ -737,6 +759,14 @@ func (e *Executor) doExecuteTool(ctx context.Context, call *genai.FunctionCall) 
 				e.notificationMgr.NotifyDenied(call.Name, reason)
 			}
 			return NewErrorResult(fmt.Sprintf("Permission denied: %s", reason))
+		}
+	}
+
+	// Step 4.5: Check tool result cache for read-only tools
+	if e.toolCache != nil {
+		if cached, hit := e.toolCache.Get(call.Name, call.Args); hit {
+			logging.Debug("tool cache hit", "tool", call.Name)
+			return cached
 		}
 	}
 
@@ -875,6 +905,22 @@ func (e *Executor) doExecuteTool(ctx context.Context, call *genai.FunctionCall) 
 		result = e.compactor.CompactForType(call.Name, result)
 	}
 
+	// Step 12.5: Cache result or invalidate cache for write operations
+	if e.toolCache != nil {
+		if result.Success {
+			e.toolCache.Put(call.Name, call.Args, result)
+		}
+		// Invalidate cache on write operations
+		if isWriteOperation(call.Name) {
+			if path, ok := call.Args["path"].(string); ok {
+				e.toolCache.InvalidateByFile(path)
+			}
+			if path, ok := call.Args["file_path"].(string); ok {
+				e.toolCache.InvalidateByFile(path)
+			}
+		}
+	}
+
 	// Step 13: Notify completion and send notifications
 	if e.handler != nil && e.handler.OnToolEnd != nil {
 		e.handler.OnToolEnd(call.Name, result)
@@ -991,4 +1037,145 @@ done:
 		return NewSuccessResult("No output."), nil
 	}
 	return NewSuccessResult(result), nil
+}
+
+// trySelfHeal attempts alternative approaches when a tool's circuit breaker is open.
+func (e *Executor) trySelfHeal(ctx context.Context, call *genai.FunctionCall) ToolResult {
+	switch call.Name {
+	case "read":
+		// If read fails, try glob to find similar files
+		if path, ok := call.Args["file_path"].(string); ok {
+			globTool, exists := e.registry.Get("glob")
+			if exists {
+				globResult, err := globTool.Execute(ctx, map[string]any{
+					"pattern": path + "*",
+				})
+				if err == nil && globResult.Success {
+					return ToolResult{
+						Content: fmt.Sprintf("File read failed (circuit open). Similar files found:\n%s", globResult.Content),
+						Success: true,
+					}
+				}
+			}
+		}
+
+	case "bash":
+		// If bash fails repeatedly, suggest debug mode
+		if cmd, ok := call.Args["command"].(string); ok {
+			return ToolResult{
+				Content: fmt.Sprintf("Bash execution failed repeatedly (circuit open). Suggestion: try 'bash -x %s' for debug output, or check if the command requires different permissions.", cmd),
+				Success: true,
+			}
+		}
+
+	case "grep":
+		// If grep fails, try read with manual search
+		if pattern, ok := call.Args["pattern"].(string); ok {
+			return ToolResult{
+				Content: fmt.Sprintf("Grep circuit open. Try using 'read' tool to read specific files and search for '%s' manually.", pattern),
+				Success: true,
+			}
+		}
+	}
+
+	return ToolResult{Success: false}
+}
+
+// isWriteOperation returns true if the tool modifies files/state.
+func isWriteOperation(toolName string) bool {
+	writeTools := map[string]bool{
+		"write":       true,
+		"edit":        true,
+		"delete":      true,
+		"atomicwrite": true,
+		"copy":        true,
+		"move":        true,
+		"mkdir":       true,
+		"bash":        true, // bash can modify anything
+		"git_add":     true,
+		"git_commit":  true,
+	}
+	return writeTools[toolName]
+}
+
+// getToolFilePath extracts the primary file path from tool arguments.
+func getToolFilePath(call *genai.FunctionCall) string {
+	if call.Args == nil {
+		return ""
+	}
+	if path, ok := call.Args["path"].(string); ok {
+		return path
+	}
+	if path, ok := call.Args["file_path"].(string); ok {
+		return path
+	}
+	if path, ok := call.Args["command"].(string); ok {
+		// For bash, we can't easily detect file paths
+		_ = path
+		return ""
+	}
+	return ""
+}
+
+// orderByDependencies reorders tool calls so that writes happen before reads on the same file.
+// Returns the ordered calls and a flag indicating if reordering was needed.
+func orderByDependencies(calls []*genai.FunctionCall) ([]*genai.FunctionCall, bool) {
+	if len(calls) <= 1 {
+		return calls, false
+	}
+
+	// Build file->writer and file->reader maps
+	writers := make(map[string]int)   // file -> index of write call
+	readers := make(map[string][]int) // file -> indices of read calls
+
+	for i, call := range calls {
+		path := getToolFilePath(call)
+		if path == "" {
+			continue
+		}
+		if isWriteOperation(call.Name) {
+			writers[path] = i
+		} else {
+			readers[path] = append(readers[path], i)
+		}
+	}
+
+	// Check if any reader depends on a writer
+	hasConflict := false
+	blockedBy := make(map[int]int) // reader_index -> writer_index it depends on
+
+	for file, writerIdx := range writers {
+		if readerIndices, ok := readers[file]; ok {
+			for _, readerIdx := range readerIndices {
+				blockedBy[readerIdx] = writerIdx
+				hasConflict = true
+			}
+		}
+	}
+
+	if !hasConflict {
+		return calls, false
+	}
+
+	// Simple topological sort: writers first, then readers
+	ordered := make([]*genai.FunctionCall, 0, len(calls))
+	added := make(map[int]bool)
+
+	// First pass: add all writers and non-conflicting calls
+	for i, call := range calls {
+		if _, isBlocked := blockedBy[i]; !isBlocked {
+			ordered = append(ordered, call)
+			added[i] = true
+		}
+	}
+
+	// Second pass: add blocked readers
+	for i, call := range calls {
+		if !added[i] {
+			ordered = append(ordered, call)
+		}
+		_ = call // suppress unused warning
+	}
+
+	return ordered, true
 }

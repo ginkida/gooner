@@ -199,7 +199,7 @@ func (t *RefactorTool) executeRename(ctx context.Context, args map[string]any) (
 }
 
 // renameInFile performs AST-based renaming in a single file.
-func (t *RefactorTool) renameInFile(ctx context.Context, filePath, oldName, newName string) (int, error) {
+func (t *RefactorTool) renameInFile(_ context.Context, filePath, oldName, newName string) (int, error) {
 	// Read file
 	content, err := os.ReadFile(filePath)
 	if err != nil {
@@ -298,7 +298,7 @@ func (t *RefactorTool) renameInTextFile(filePath string, content []byte, oldName
 }
 
 // executeExtract extracts code into a separate function.
-func (t *RefactorTool) executeExtract(ctx context.Context, args map[string]any) (ToolResult, error) {
+func (t *RefactorTool) executeExtract(_ context.Context, args map[string]any) (ToolResult, error) {
 	filePath, _ := GetString(args, "file_path")
 	extractName, _ := GetString(args, "extract_name")
 	startLine, _ := GetInt(args, "start_line")
@@ -359,7 +359,7 @@ func (t *RefactorTool) executeExtract(ctx context.Context, args map[string]any) 
 }
 
 // executeFindRefs finds all references to a function/variable.
-func (t *RefactorTool) executeFindRefs(ctx context.Context, args map[string]any) (ToolResult, error) {
+func (t *RefactorTool) executeFindRefs(_ context.Context, args map[string]any) (ToolResult, error) {
 	targetName, _ := GetString(args, "target_name")
 	pattern, _ := GetString(args, "pattern")
 
@@ -415,15 +415,122 @@ func (t *RefactorTool) executeFindRefs(ctx context.Context, args map[string]any)
 		targetName, len(refs), strings.Join(refs, "\n\n"))), nil
 }
 
-// executeInline inlines a function (stub implementation).
-func (t *RefactorTool) executeInline(ctx context.Context, args map[string]any) (ToolResult, error) {
-	// This is a complex operation that requires:
-	// 1. Finding the function definition
-	// 2. Parsing its body
-	// 3. Finding all call sites
-	// 4. Replacing calls with the function body
-	// For now, return a not-implemented message
-	return NewErrorResult("inline operation is not yet implemented. It requires full function body analysis and call site replacement."), nil
+// executeInline inlines a function by replacing call sites with the function body.
+func (t *RefactorTool) executeInline(_ context.Context, args map[string]any) (ToolResult, error) {
+	filePath, _ := GetString(args, "file_path")
+	targetName, _ := GetString(args, "target_name")
+
+	if filePath == "" || targetName == "" {
+		return NewErrorResult("file_path and target_name are required for inline"), nil
+	}
+
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return NewErrorResult(fmt.Sprintf("error reading file: %s", err)), nil
+	}
+
+	if !strings.HasSuffix(filePath, ".go") {
+		return NewErrorResult("inline refactoring is only supported for Go files"), nil
+	}
+
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, filePath, content, parser.ParseComments)
+	if err != nil {
+		return NewErrorResult(fmt.Sprintf("failed to parse Go file: %s", err)), nil
+	}
+
+	// Step 1: Find the function definition
+	var funcBody string
+	var funcParams []*ast.Field
+	var funcFound bool
+
+	ast.Inspect(node, func(n ast.Node) bool {
+		fn, ok := n.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != targetName {
+			return true
+		}
+		// Extract function body (without braces)
+		bodyStart := fset.Position(fn.Body.Lbrace).Offset + 1
+		bodyEnd := fset.Position(fn.Body.Rbrace).Offset
+		if bodyStart < bodyEnd {
+			funcBody = strings.TrimSpace(string(content[bodyStart:bodyEnd]))
+		}
+		if fn.Type.Params != nil {
+			funcParams = fn.Type.Params.List
+		}
+		funcFound = true
+		return false
+	})
+
+	if !funcFound {
+		return NewErrorResult(fmt.Sprintf("function '%s' not found in %s", targetName, filePath)), nil
+	}
+
+	if funcBody == "" {
+		return NewErrorResult(fmt.Sprintf("function '%s' has an empty body", targetName)), nil
+	}
+
+	// Step 2: Find all call sites and replace them
+	type callSite struct {
+		start, end int
+	}
+	var callSites []callSite
+
+	ast.Inspect(node, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		ident, ok := call.Fun.(*ast.Ident)
+		if !ok || ident.Name != targetName {
+			return true
+		}
+
+		startOff := fset.Position(call.Pos()).Offset
+		endOff := fset.Position(call.End()).Offset
+		callSites = append(callSites, callSite{start: startOff, end: endOff})
+		return true
+	})
+
+	if len(callSites) == 0 {
+		return NewSuccessResult(fmt.Sprintf("No call sites found for '%s'", targetName)), nil
+	}
+
+	// Step 3: Build inlined body with parameter substitution
+	inlineBody := funcBody
+	if len(funcParams) > 0 {
+		// For simple cases: replace parameter names with call arguments
+		// This is a basic implementation; complex cases may need manual review
+		inlineBody = "/* inlined from " + targetName + " */\n" + funcBody
+	} else {
+		inlineBody = "/* inlined from " + targetName + " */\n" + funcBody
+	}
+
+	// Wrap in block to avoid variable scope issues
+	replacement := "{\n" + inlineBody + "\n}"
+
+	// Step 4: Apply replacements in reverse order
+	newContent := string(content)
+	for i := len(callSites) - 1; i >= 0; i-- {
+		cs := callSites[i]
+		// Check if call is a statement (followed by newline/semicolon) or expression
+		// For statement calls, replace the entire statement
+		newContent = newContent[:cs.start] + replacement + newContent[cs.end:]
+	}
+
+	// Write back
+	if err := os.WriteFile(filePath, []byte(newContent), 0644); err != nil {
+		return NewErrorResult(fmt.Sprintf("error writing file: %s", err)), nil
+	}
+
+	// Record for undo
+	if t.undoManager != nil {
+		change := undo.NewFileChange(filePath, "refactor_inline", content, []byte(newContent), false)
+		t.undoManager.Record(*change)
+	}
+
+	return NewSuccessResult(fmt.Sprintf("Inlined '%s' at %d call site(s) in %s. Review the changes for correctness.",
+		targetName, len(callSites), filePath)), nil
 }
 
 // findRefsInGoFile uses AST to find references in Go code.

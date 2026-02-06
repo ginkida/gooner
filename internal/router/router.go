@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"gokin/internal/agent"
 	"gokin/internal/client"
@@ -18,6 +19,15 @@ import (
 type PlanChecker interface {
 	IsActive() bool
 	IsEnabled() bool
+}
+
+// routingRecord stores a routing decision and its outcome for learning.
+type routingRecord struct {
+	message   string
+	taskType  TaskType
+	strategy  ExecutionStrategy
+	success   bool
+	timestamp time.Time
 }
 
 // Router determines the optimal execution strategy for incoming tasks
@@ -36,6 +46,15 @@ type Router struct {
 	enabled            bool
 	decomposeThreshold int
 	parallelThreshold  int
+
+	// Learned routing
+	routingHistory []routingRecord
+	historyMu      sync.RWMutex
+
+	// Context awareness
+	recentErrors     int
+	recentOps        int
+	conversationMode string // "exploring", "implementing", "debugging", "refactoring"
 }
 
 // AgentRunner interface for spawning agents (implemented by agent.Runner)
@@ -71,6 +90,7 @@ func NewRouter(cfg *RouterConfig, executor *tools.Executor, agentRunner AgentRun
 		enabled:            cfg.Enabled,
 		decomposeThreshold: cfg.DecomposeThreshold,
 		parallelThreshold:  cfg.ParallelThreshold,
+		routingHistory:     make([]routingRecord, 0, 100),
 	}
 }
 
@@ -100,12 +120,27 @@ func (r *Router) Route(message string) *RoutingDecision {
 		}
 	}
 
+	// Context-aware adjustment: high error rate suggests debugging mode
+	if r.GetErrorRate() > 0.3 && analysis.Strategy != StrategySubAgent {
+		logging.Debug("high error rate detected, preferring executor for debugging",
+			"error_rate", r.GetErrorRate(),
+			"mode", r.GetConversationMode())
+		// In debugging mode, prefer executor over direct/sub-agent
+		// because it allows iterative tool use
+		if analysis.Strategy == StrategyDirect {
+			analysis.Strategy = StrategyExecutor
+		}
+	}
+
 	logging.Debug("task routed",
 		"message", message,
 		"complexity", analysis.Score,
 		"type", analysis.Type,
 		"strategy", analysis.Strategy,
 		"reasoning", analysis.Reasoning)
+
+	// Adjust strategy based on learned history
+	r.adjustStrategyFromHistory(analysis)
 
 	decision := &RoutingDecision{
 		Analysis:    analysis,
@@ -445,6 +480,79 @@ func (r *Router) GetAnalysis(message string) *TaskComplexity {
 	return r.analyzer.Analyze(message)
 }
 
+// RecordRoutingOutcome records whether a routing decision was successful.
+func (r *Router) RecordRoutingOutcome(message string, analysis *TaskComplexity, success bool) {
+	r.historyMu.Lock()
+	defer r.historyMu.Unlock()
+
+	r.routingHistory = append(r.routingHistory, routingRecord{
+		message:   message,
+		taskType:  analysis.Type,
+		strategy:  analysis.Strategy,
+		success:   success,
+		timestamp: time.Now(),
+	})
+
+	// Keep last 100 records
+	if len(r.routingHistory) > 100 {
+		r.routingHistory = r.routingHistory[len(r.routingHistory)-100:]
+	}
+}
+
+// getStrategySuccessRate returns the success rate for a given strategy from history.
+func (r *Router) getStrategySuccessRate(strategy ExecutionStrategy) float64 {
+	r.historyMu.RLock()
+	defer r.historyMu.RUnlock()
+
+	total := 0
+	successes := 0
+	for _, rec := range r.routingHistory {
+		if rec.strategy == strategy {
+			total++
+			if rec.success {
+				successes++
+			}
+		}
+	}
+
+	if total < 3 {
+		return 0.5 // Not enough data
+	}
+	return float64(successes) / float64(total)
+}
+
+// adjustStrategyFromHistory adjusts the routing strategy based on historical success rates.
+func (r *Router) adjustStrategyFromHistory(analysis *TaskComplexity) {
+	currentRate := r.getStrategySuccessRate(analysis.Strategy)
+
+	// If current strategy has poor success rate (<30%), try alternatives
+	if currentRate < 0.3 && currentRate > 0 {
+		// Try upgrading to a more capable strategy
+		switch analysis.Strategy {
+		case StrategyDirect:
+			altRate := r.getStrategySuccessRate(StrategyExecutor)
+			if altRate > currentRate {
+				logging.Debug("learned routing override",
+					"from", analysis.Strategy,
+					"to", StrategyExecutor,
+					"current_rate", currentRate,
+					"alt_rate", altRate)
+				analysis.Strategy = StrategyExecutor
+			}
+		case StrategyExecutor:
+			altRate := r.getStrategySuccessRate(StrategySubAgent)
+			if altRate > currentRate {
+				logging.Debug("learned routing override",
+					"from", analysis.Strategy,
+					"to", StrategySubAgent,
+					"current_rate", currentRate,
+					"alt_rate", altRate)
+				analysis.Strategy = StrategySubAgent
+			}
+		}
+	}
+}
+
 // RoutingDecision represents the routing decision for a task
 type RoutingDecision struct {
 	Analysis        *TaskComplexity
@@ -480,4 +588,58 @@ const (
 // String returns the string representation
 func (h HandlerType) String() string {
 	return string(h)
+}
+
+// TrackOperation records an operation outcome for context awareness.
+func (r *Router) TrackOperation(toolName string, success bool) {
+	r.historyMu.Lock()
+	defer r.historyMu.Unlock()
+
+	r.recentOps++
+	if !success {
+		r.recentErrors++
+	}
+
+	// Reset counters every 20 operations
+	if r.recentOps >= 20 {
+		r.recentOps = 0
+		r.recentErrors = 0
+	}
+
+	// Update conversation mode based on tool usage patterns
+	r.updateConversationMode(toolName)
+}
+
+// updateConversationMode infers the conversation mode from recent tool usage.
+func (r *Router) updateConversationMode(toolName string) {
+	switch {
+	case toolName == "grep" || toolName == "glob" || toolName == "read" || toolName == "tree":
+		r.conversationMode = "exploring"
+	case toolName == "write" || toolName == "edit":
+		r.conversationMode = "implementing"
+	case toolName == "bash" && r.recentErrors > 2:
+		r.conversationMode = "debugging"
+	}
+}
+
+// GetConversationMode returns the current inferred conversation mode.
+func (r *Router) GetConversationMode() string {
+	r.historyMu.RLock()
+	defer r.historyMu.RUnlock()
+
+	if r.conversationMode == "" {
+		return "exploring"
+	}
+	return r.conversationMode
+}
+
+// GetErrorRate returns the recent error rate.
+func (r *Router) GetErrorRate() float64 {
+	r.historyMu.RLock()
+	defer r.historyMu.RUnlock()
+
+	if r.recentOps == 0 {
+		return 0
+	}
+	return float64(r.recentErrors) / float64(r.recentOps)
 }

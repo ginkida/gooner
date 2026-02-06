@@ -238,21 +238,43 @@ func (c *ResultCompactor) CompactForType(toolName string, result tools.ToolResul
 	}
 }
 
-// compactFileContent optimizes file content truncation.
+// compactFileContent optimizes file content by preserving function/type signatures.
 func (c *ResultCompactor) compactFileContent(result tools.ToolResult) tools.ToolResult {
 	lines := strings.Split(result.Content, "\n")
 	if len(lines) <= 50 {
 		return c.Compact(result)
 	}
 
-	// For files, keep more from the beginning
+	// Extract function/type signatures and keep them
+	var signatures []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if isSignatureLine(trimmed) {
+			signatures = append(signatures, line)
+		}
+	}
+
 	headCount := 30
 	tailCount := 10
 	omittedCount := len(lines) - headCount - tailCount
 
 	var builder strings.Builder
 	builder.WriteString(strings.Join(lines[:headCount], "\n"))
-	builder.WriteString(fmt.Sprintf("\n\n...[%d lines omitted, file continues]...\n\n", omittedCount))
+
+	// Insert extracted signatures if we found any in the omitted section
+	if len(signatures) > 0 {
+		omittedSigs := filterOmittedSignatures(signatures, lines, headCount, len(lines)-tailCount)
+		if len(omittedSigs) > 0 {
+			builder.WriteString(fmt.Sprintf("\n\n...[%d lines omitted, key signatures preserved:]...\n", omittedCount))
+			builder.WriteString(strings.Join(omittedSigs, "\n"))
+			builder.WriteString("\n\n")
+		} else {
+			builder.WriteString(fmt.Sprintf("\n\n...[%d lines omitted]...\n\n", omittedCount))
+		}
+	} else {
+		builder.WriteString(fmt.Sprintf("\n\n...[%d lines omitted]...\n\n", omittedCount))
+	}
+
 	builder.WriteString(strings.Join(lines[len(lines)-tailCount:], "\n"))
 
 	return tools.ToolResult{
@@ -262,16 +284,21 @@ func (c *ResultCompactor) compactFileContent(result tools.ToolResult) tools.Tool
 	}
 }
 
-// compactCommandOutput optimizes command output truncation.
+// compactCommandOutput optimizes command output with error-aware truncation.
 func (c *ResultCompactor) compactCommandOutput(result tools.ToolResult) tools.ToolResult {
-	// Command output: keep recent output (tail) more than beginning
 	lines := strings.Split(result.Content, "\n")
 	if len(lines) <= 30 {
 		return c.Compact(result)
 	}
 
+	// If output contains errors, keep more from the tail (where errors usually appear)
 	headCount := 5
 	tailCount := 20
+	if c.containsErrorIndicators(result.Content) {
+		headCount = 3
+		tailCount = 25
+	}
+
 	omittedCount := len(lines) - headCount - tailCount
 
 	var builder strings.Builder
@@ -286,20 +313,54 @@ func (c *ResultCompactor) compactCommandOutput(result tools.ToolResult) tools.To
 	}
 }
 
-// compactSearchResults optimizes grep/search results.
+// compactSearchResults optimizes grep/search results by prioritizing error-related matches.
 func (c *ResultCompactor) compactSearchResults(result tools.ToolResult) tools.ToolResult {
 	lines := strings.Split(result.Content, "\n")
 	if len(lines) <= 50 {
 		return c.Compact(result)
 	}
 
-	// For search: show first matches, indicate more exist
-	maxResults := 40
-	omittedCount := len(lines) - maxResults
+	// Separate error-related matches from normal matches
+	var errorMatches []string
+	var normalMatches []string
+	for _, line := range lines {
+		if c.isErrorLine(line) {
+			errorMatches = append(errorMatches, line)
+		} else {
+			normalMatches = append(normalMatches, line)
+		}
+	}
 
+	maxResults := 40
 	var builder strings.Builder
-	builder.WriteString(strings.Join(lines[:maxResults], "\n"))
-	builder.WriteString(fmt.Sprintf("\n\n...[%d more matches not shown]", omittedCount))
+
+	// Error matches always come first
+	if len(errorMatches) > 0 {
+		builder.WriteString("=== Error-related matches ===\n")
+		limit := maxResults / 2
+		if limit > len(errorMatches) {
+			limit = len(errorMatches)
+		}
+		builder.WriteString(strings.Join(errorMatches[:limit], "\n"))
+		maxResults -= limit
+		if len(errorMatches) > limit {
+			builder.WriteString(fmt.Sprintf("\n... [%d more error matches]\n", len(errorMatches)-limit))
+		}
+		builder.WriteString("\n\n=== Other matches ===\n")
+	}
+
+	// Fill remaining with normal matches
+	if maxResults > 0 && len(normalMatches) > 0 {
+		limit := maxResults
+		if limit > len(normalMatches) {
+			limit = len(normalMatches)
+		}
+		builder.WriteString(strings.Join(normalMatches[:limit], "\n"))
+		remaining := len(normalMatches) - limit
+		if remaining > 0 {
+			builder.WriteString(fmt.Sprintf("\n\n...[%d more matches not shown, total: %d]", remaining, len(lines)))
+		}
+	}
 
 	return tools.ToolResult{
 		Content: builder.String(),
@@ -350,4 +411,48 @@ func (c *ResultCompactor) compactTreeOutput(result tools.ToolResult) tools.ToolR
 		Data:    result.Data,
 		Success: true,
 	}
+}
+
+// isSignatureLine checks if a line is a function, type, or struct declaration.
+func isSignatureLine(line string) bool {
+	// Go signatures
+	if strings.HasPrefix(line, "func ") || strings.HasPrefix(line, "type ") {
+		return true
+	}
+	// Method signatures (func (receiver) Name)
+	if strings.HasPrefix(line, "func (") {
+		return true
+	}
+	// Interface/struct declarations
+	if (strings.Contains(line, " struct {") || strings.Contains(line, " interface {")) && !strings.HasPrefix(line, "//") {
+		return true
+	}
+	// Python/JS/TS signatures
+	if strings.HasPrefix(line, "def ") || strings.HasPrefix(line, "class ") {
+		return true
+	}
+	if strings.HasPrefix(line, "function ") || strings.HasPrefix(line, "export ") || strings.HasPrefix(line, "const ") {
+		return true
+	}
+	return false
+}
+
+// filterOmittedSignatures returns signatures that fall within the omitted line range.
+func filterOmittedSignatures(signatures []string, allLines []string, startOmit, endOmit int) []string {
+	sigSet := make(map[string]bool)
+	for _, sig := range signatures {
+		sigSet[sig] = true
+	}
+
+	var result []string
+	for i := startOmit; i < endOmit && i < len(allLines); i++ {
+		if sigSet[allLines[i]] {
+			result = append(result, allLines[i])
+		}
+	}
+	// Limit to 20 signatures to avoid excessive output
+	if len(result) > 20 {
+		result = result[:20]
+	}
+	return result
 }

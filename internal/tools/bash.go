@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -61,11 +62,63 @@ const (
 	DefaultBashTimeout = 30 * time.Second
 	// ProgressInterval is the interval for sending progress updates during long-running commands
 	ProgressInterval = 5 * time.Second
+	// StreamingFlushInterval is the interval for flushing partial output during foreground execution
+	StreamingFlushInterval = 100 * time.Millisecond
 )
+
+// BashSession maintains persistent state across bash command invocations.
+// It tracks the working directory and environment variables so that
+// sequential commands behave as if they run in the same shell session.
+type BashSession struct {
+	workDir string            // persistent working directory
+	env     map[string]string // environment variables set during session
+	mu      sync.Mutex        // for thread safety
+}
+
+// NewBashSession creates a new BashSession with the given initial working directory.
+func NewBashSession(workDir string) *BashSession {
+	return &BashSession{
+		workDir: workDir,
+		env:     make(map[string]string),
+	}
+}
+
+// WorkDir returns the current working directory of the session.
+func (s *BashSession) WorkDir() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.workDir
+}
+
+// SetWorkDir updates the working directory of the session.
+func (s *BashSession) SetWorkDir(dir string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.workDir = dir
+}
+
+// SetEnv sets an environment variable in the session.
+func (s *BashSession) SetEnv(key, value string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.env[key] = value
+}
+
+// Env returns a copy of the session environment variables.
+func (s *BashSession) Env() map[string]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := make(map[string]string, len(s.env))
+	for k, v := range s.env {
+		cp[k] = v
+	}
+	return cp
+}
 
 // BashTool executes bash commands.
 type BashTool struct {
 	workDir          string
+	session          *BashSession
 	taskManager      *tasks.Manager
 	timeout          time.Duration // Explicit timeout for commands
 	sandboxEnabled   bool          // Enable sandboxing for bash commands
@@ -76,6 +129,7 @@ type BashTool struct {
 func NewBashTool(workDir string) *BashTool {
 	return &BashTool{
 		workDir:        workDir,
+		session:        NewBashSession(workDir),
 		timeout:        DefaultBashTimeout, // Set default timeout
 		sandboxEnabled: false,              // Sandbox disabled by default (requires root)
 	}
@@ -259,6 +313,106 @@ func (t *BashTool) executeBackground(ctx context.Context, command string) (ToolR
 	), nil
 }
 
+// buildSessionEnv creates a sanitized environment with session env vars injected.
+func (t *BashTool) buildSessionEnv() []string {
+	env := buildSafeEnv()
+
+	// Inject session environment variables (override safe env if same key)
+	sessionEnv := t.session.Env()
+	for key, val := range sessionEnv {
+		// Remove existing entry for this key if present
+		found := false
+		prefix := key + "="
+		for i, e := range env {
+			if strings.HasPrefix(e, prefix) {
+				env[i] = key + "=" + val
+				found = true
+				break
+			}
+		}
+		if !found {
+			env = append(env, key+"="+val)
+		}
+	}
+
+	return env
+}
+
+// updateSessionAfterCommand checks if the command changed the working directory
+// (via cd) and updates the session accordingly.
+func (t *BashTool) updateSessionAfterCommand(command string) {
+	trimmed := strings.TrimSpace(command)
+
+	// Handle bare "cd" (go to home directory)
+	if trimmed == "cd" || trimmed == "cd~" || trimmed == "cd ~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			t.session.SetWorkDir(home)
+		}
+		return
+	}
+
+	// Handle "cd -" — we don't track OLDPWD, so skip
+	if trimmed == "cd -" {
+		return
+	}
+
+	// Match commands starting with "cd " — extract the target path.
+	// We handle simple cases: "cd <path>", "cd <path> && ...", "cd <path>; ..."
+	// For compound commands we only update if cd is the last meaningful command,
+	// but a simple heuristic is to check if it starts with "cd ".
+	if !strings.HasPrefix(trimmed, "cd ") {
+		return
+	}
+
+	// Extract the path argument from the cd command.
+	// Stop at shell operators: &&, ||, ;, |, #
+	rest := strings.TrimPrefix(trimmed, "cd ")
+	rest = strings.TrimSpace(rest)
+
+	// If the cd is followed by another command (&&, ;, ||, |), it's part of a
+	// compound command — the final working directory depends on the full chain,
+	// which we can't easily determine. Skip updating in that case.
+	for _, sep := range []string{"&&", "||", ";", "|"} {
+		if strings.Contains(rest, sep) {
+			return
+		}
+	}
+
+	// Strip surrounding quotes if present
+	if (strings.HasPrefix(rest, "\"") && strings.HasSuffix(rest, "\"")) ||
+		(strings.HasPrefix(rest, "'") && strings.HasSuffix(rest, "'")) {
+		rest = rest[1 : len(rest)-1]
+	}
+
+	// Handle home directory expansion
+	if strings.HasPrefix(rest, "~") {
+		if home, err := os.UserHomeDir(); err == nil {
+			rest = home + rest[1:]
+		}
+	}
+
+	if rest == "" {
+		return
+	}
+
+	// Resolve relative paths against current session workDir
+	currentDir := t.session.WorkDir()
+	var target string
+	if filepath.IsAbs(rest) {
+		target = rest
+	} else {
+		target = filepath.Join(currentDir, rest)
+	}
+
+	// Clean the path
+	target = filepath.Clean(target)
+
+	// Only update if the directory actually exists
+	if info, err := os.Stat(target); err == nil && info.IsDir() {
+		t.session.SetWorkDir(target)
+	}
+}
+
 // executeForeground runs a command and waits for completion.
 func (t *BashTool) executeForeground(ctx context.Context, command string) (ToolResult, error) {
 	// Create context with explicit timeout to prevent indefinite hangs
@@ -275,18 +429,152 @@ func (t *BashTool) executeForeground(ctx context.Context, command string) (ToolR
 		return t.executeSandboxed(execCtx, command)
 	}
 
+	// Use session working directory
+	workDir := t.session.WorkDir()
+
 	// Fall back to standard execution (legacy behavior)
 	cmd := exec.CommandContext(execCtx, "bash", "-c", command)
-	cmd.Dir = t.workDir
+	cmd.Dir = workDir
 
-	// Use sanitized environment to prevent leaking sensitive env vars
-	cmd.Env = buildSafeEnv()
+	// Use sanitized environment with session env vars injected
+	cmd.Env = t.buildSessionEnv()
 
 	// Set up process group for proper cleanup of child processes
 	setBashProcAttr(cmd)
 
-	// Capture output
+	// Get progress callback for streaming output
+	onProgress := GetProgressCallback(ctx)
+
+	// Set up output capture with optional streaming
 	var stdout, stderr bytes.Buffer
+	if onProgress != nil {
+		// Use pipes for streaming output
+		stdoutPipe, err := cmd.StdoutPipe()
+		if err != nil {
+			return NewErrorResult(fmt.Sprintf("failed to create stdout pipe: %s", err)), nil
+		}
+		stderrPipe, err := cmd.StderrPipe()
+		if err != nil {
+			return NewErrorResult(fmt.Sprintf("failed to create stderr pipe: %s", err)), nil
+		}
+
+		// Start command
+		if err := cmd.Start(); err != nil {
+			return NewErrorResult(fmt.Sprintf("failed to start command: %s", err)), nil
+		}
+
+		// Read stdout and stderr in goroutines
+		var readerWg sync.WaitGroup
+		var stdoutMu, stderrMu sync.Mutex
+
+		readerWg.Add(2)
+		go func() {
+			defer readerWg.Done()
+			buf := make([]byte, 4096)
+			for {
+				n, err := stdoutPipe.Read(buf)
+				if n > 0 {
+					stdoutMu.Lock()
+					stdout.Write(buf[:n])
+					stdoutMu.Unlock()
+				}
+				if err != nil {
+					break
+				}
+			}
+		}()
+		go func() {
+			defer readerWg.Done()
+			buf := make([]byte, 4096)
+			for {
+				n, err := stderrPipe.Read(buf)
+				if n > 0 {
+					stderrMu.Lock()
+					stderr.Write(buf[:n])
+					stderrMu.Unlock()
+				}
+				if err != nil {
+					break
+				}
+			}
+		}()
+
+		// Periodically flush partial output to the progress callback
+		streamStop := make(chan struct{})
+		streamDone := make(chan struct{})
+		go func() {
+			defer close(streamDone)
+			ticker := time.NewTicker(StreamingFlushInterval)
+			defer ticker.Stop()
+			lastSentLen := 0
+			for {
+				select {
+				case <-ticker.C:
+					stdoutMu.Lock()
+					current := stdout.String()
+					stdoutMu.Unlock()
+					if len(current) > lastSentLen {
+						partial := current[lastSentLen:]
+						onProgress(0, partial)
+						lastSentLen = len(current)
+					}
+				case <-streamStop:
+					return
+				}
+			}
+		}()
+
+		// Wait for command completion
+		var cmdErr error
+		cmdDone := make(chan struct{})
+		go func() {
+			cmdErr = cmd.Wait()
+			close(cmdDone)
+		}()
+
+		timedOut := false
+		select {
+		case <-cmdDone:
+			// Command completed
+		case <-execCtx.Done():
+			timedOut = true
+			killBashProcessGroup(cmd, 5*time.Second)
+			<-cmdDone
+		}
+
+		// Wait for readers to drain
+		readerWg.Wait()
+		// Stop the streaming goroutine and wait for it to exit
+		close(streamStop)
+		<-streamDone
+
+		if timedOut {
+			return NewErrorResult(fmt.Sprintf(
+				"command timed out after %v. For long-running commands, use run_in_background=true",
+				t.timeout)), nil
+		}
+
+		// Update session after successful command
+		if cmdErr == nil {
+			t.updateSessionAfterCommand(command)
+		}
+
+		if cmdErr != nil {
+			exitErr, ok := cmdErr.(*exec.ExitError)
+			if ok {
+				return ToolResult{
+					Content: stdout.String(),
+					Error:   fmt.Sprintf("command exited with code %d", exitErr.ExitCode()),
+					Success: false,
+				}, nil
+			}
+			return NewErrorResult(fmt.Sprintf("command failed: %s", cmdErr)), nil
+		}
+
+		return t.buildResult(stdout.String(), stderr.String()), nil
+	}
+
+	// Non-streaming path: capture output directly
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -341,6 +629,11 @@ func (t *BashTool) executeForeground(ctx context.Context, command string) (ToolR
 			t.timeout)), nil
 	}
 
+	// Update session after successful command
+	if finalErr == nil {
+		t.updateSessionAfterCommand(command)
+	}
+
 	// Handle command error
 	if finalErr != nil {
 		// Include exit code in error
@@ -355,19 +648,23 @@ func (t *BashTool) executeForeground(ctx context.Context, command string) (ToolR
 		return NewErrorResult(fmt.Sprintf("command failed: %s", finalErr)), nil
 	}
 
-	// Build output
+	return t.buildResult(stdout.String(), stderr.String()), nil
+}
+
+// buildResult constructs a ToolResult from stdout and stderr output.
+func (t *BashTool) buildResult(stdoutStr, stderrStr string) ToolResult {
 	var output strings.Builder
 
-	if stdout.Len() > 0 {
-		output.WriteString(stdout.String())
+	if len(stdoutStr) > 0 {
+		output.WriteString(stdoutStr)
 	}
 
-	if stderr.Len() > 0 {
+	if len(stderrStr) > 0 {
 		if output.Len() > 0 {
 			output.WriteString("\n")
 		}
 		output.WriteString("STDERR:\n")
-		output.WriteString(stderr.String())
+		output.WriteString(stderrStr)
 	}
 
 	// Truncate if too long
@@ -382,7 +679,7 @@ func (t *BashTool) executeForeground(ctx context.Context, command string) (ToolR
 		result = "(no output)"
 	}
 
-	return NewSuccessResult(result), nil
+	return NewSuccessResult(result)
 }
 
 // executeSandboxed executes the command with sandbox isolation

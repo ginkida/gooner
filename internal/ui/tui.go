@@ -184,6 +184,16 @@ type Model struct {
 	// Activity feed panel
 	activityFeed  *ActivityFeedPanel
 	currentToolID string // For tracking active tool
+
+	// Compact mode
+	CompactMode bool
+
+	// Status line contextual information
+	injectedContextCount int
+	tokenUsagePercent    float64
+	conversationMode     string // exploring/implementing/debugging
+	mcpHealthy           int
+	mcpTotal             int
 }
 
 // BackgroundTaskState tracks the state of a background task for UI display.
@@ -280,7 +290,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.input.SetWidth(msg.Width)
-		m.output.SetSize(msg.Width, msg.Height-5) // More space for content
+		if m.CompactMode {
+			m.output.SetSize(msg.Width, msg.Height/3)
+		} else {
+			m.output.SetSize(msg.Width, msg.Height-5)
+		}
 
 		if m.planFeedbackMode {
 			m.planFeedbackInput.SetWidth(msg.Width - 4)
@@ -894,6 +908,31 @@ func (m *Model) handleGlobalKeys(msg tea.KeyMsg) tea.Cmd {
 	// Handle Ctrl+T for todos toggle
 	if msg.Type == tea.KeyCtrlT && m.state == StateInput {
 		m.todosVisible = !m.todosVisible
+		return nil
+	}
+
+	// Handle Ctrl+Shift+C for compact mode toggle (only when in input state)
+	if msg.String() == "ctrl+shift+c" && m.state == StateInput {
+		m.CompactMode = !m.CompactMode
+		if m.CompactMode {
+			m.output.SetSize(m.width, m.height/3)
+		} else {
+			m.output.SetSize(m.width, m.height-5)
+		}
+		return nil
+	}
+
+	// Handle 'E' (shift+e) for toggle all tool outputs (only when input is empty)
+	if msg.String() == "E" && m.state == StateInput && m.input.Value() == "" {
+		if m.toolOutput != nil && m.toolOutput.EntryCount() > 0 {
+			m.toolOutput.ToggleAll()
+			if m.toolOutput.AllExpanded {
+				m.output.AppendLine(m.styles.Dim.Render("  [All tool outputs expanded]"))
+			} else {
+				m.output.AppendLine(m.styles.Dim.Render("  [All tool outputs collapsed]"))
+			}
+			m.output.AppendLine("")
+		}
 		return nil
 	}
 
@@ -1573,6 +1612,16 @@ func (m *Model) handleToolResult(content string) {
 		m.lastToolOutputIndex = m.toolOutput.AddEntry(m.currentTool, content)
 	}
 
+	// When all outputs are collapsed via ToggleAll, show compact summary
+	if m.toolOutput != nil && !m.toolOutput.AllExpanded && m.toolOutput.NeedsTruncation(content) {
+		summaryText := m.toolOutput.GetSummary(m.lastToolOutputIndex)
+		if summaryText != "" {
+			m.output.AppendLine("    " + dimStyle.Render(summaryText))
+			m.output.AppendLine("")
+			return
+		}
+	}
+
 	// Content lines (truncated) with simple indent
 	displayContent := FormatToolOutput(content, 6, false)
 	lines := strings.Split(displayContent, "\n")
@@ -2104,6 +2153,15 @@ func (m *Model) Cleanup() {
 		// but ideally should have been a Cmd if we were still in the loop.
 		fmt.Print("\033]1337;SetBadgeFormat=\a")
 	}
+}
+
+// UpdateStatusInfo updates the contextual status information displayed in the status bar.
+func (m *Model) UpdateStatusInfo(tokenPercent float64, mode string, mcpHealthy, mcpTotal, memoryCount int) {
+	m.tokenUsagePercent = tokenPercent
+	m.conversationMode = mode
+	m.mcpHealthy = mcpHealthy
+	m.mcpTotal = mcpTotal
+	m.injectedContextCount = memoryCount
 }
 
 // HidePlanProgress hides the plan progress panel.

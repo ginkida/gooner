@@ -142,7 +142,7 @@ func (p *CommandPalette) RefreshCommands() {
 	p.filterCommands(p.query)
 }
 
-// sortCommands sorts commands by: recent first, then by category priority, then by priority within category.
+// sortCommands sorts commands by: recent first (by real timestamp), then by category priority, then by priority within category.
 func (p *CommandPalette) sortCommands() {
 	sort.SliceStable(p.commands, func(i, j int) bool {
 		// Recent commands first
@@ -153,19 +153,11 @@ func (p *CommandPalette) sortCommands() {
 			return false
 		}
 
-		// For recent commands, sort by recency (priority lower = used more recently)
+		// For recent commands, sort by actual timestamp (most recent first)
 		if p.commands[i].IsRecent && p.commands[j].IsRecent {
-			recentCmds := p.history.GetRecentCommands(5)
-			iIdx, jIdx := len(recentCmds), len(recentCmds)
-			for idx, c := range recentCmds {
-				if c == p.commands[i].Name {
-					iIdx = idx
-				}
-				if c == p.commands[j].Name {
-					jIdx = idx
-				}
-			}
-			return iIdx < jIdx
+			ti := p.history.GetTimestamp(p.commands[i].Name)
+			tj := p.history.GetTimestamp(p.commands[j].Name)
+			return ti.After(tj)
 		}
 
 		// Then by priority (lower = higher priority)
@@ -330,7 +322,25 @@ func (p *CommandPalette) GetSelected() *EnhancedPaletteCommand {
 }
 
 // Execute executes the selected command and returns it.
+// If the query starts with "/" and matches a command name exactly, that command
+// is executed directly without requiring list navigation.
 func (p *CommandPalette) Execute() *EnhancedPaletteCommand {
+	// Direct slash command execution: if query starts with "/" and matches a command name exactly
+	if strings.HasPrefix(p.query, "/") {
+		queryName := p.query[1:] // strip leading "/"
+		for i := range p.commands {
+			if strings.EqualFold(p.commands[i].Name, queryName) && p.commands[i].Enabled {
+				p.history.RecordUsage(p.commands[i].Name)
+				cmd := p.commands[i]
+				if cmd.Type == CommandTypeAction && cmd.Action != nil {
+					cmd.Action()
+				}
+				p.Hide()
+				return &cmd
+			}
+		}
+	}
+
 	cmd := p.GetSelected()
 	if cmd == nil {
 		p.Hide()
@@ -553,8 +563,12 @@ func (p *CommandPalette) View(width, height int) string {
 			}
 			line.WriteString(" ")
 
-			// Description
+			// Description (truncate to 60 chars max)
 			desc := cmd.Description
+			const maxDescLen = 60
+			if len(desc) > maxDescLen {
+				desc = desc[:maxDescLen] + "..."
+			}
 			maxDesc := paletteWidth - 25
 			if cmd.ArgHint != "" {
 				maxDesc -= len(cmd.ArgHint) + 3

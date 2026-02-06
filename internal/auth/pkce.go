@@ -4,17 +4,17 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 )
 
 // generateCodeVerifier generates a cryptographically random code verifier for PKCE.
 // The verifier is a 32-byte random string, base64url encoded (43 characters).
-func generateCodeVerifier() string {
+func generateCodeVerifier() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		// Fallback to a simpler approach if crypto/rand fails
-		panic("failed to generate random bytes for PKCE verifier: " + err.Error())
+		return "", fmt.Errorf("failed to generate random bytes for PKCE verifier: %w", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(b)
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 // generateCodeChallenge generates a code challenge from the code verifier.
@@ -25,10 +25,10 @@ func generateCodeChallenge(verifier string) string {
 }
 
 // generateState generates a random state parameter for CSRF protection.
-func generateState() string {
+func generateState() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		panic("failed to generate random bytes for state: " + err.Error())
+		return "", fmt.Errorf("failed to generate random bytes for state: %w", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(b)
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }

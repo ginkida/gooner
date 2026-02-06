@@ -1211,6 +1211,121 @@ func GetAllDeclarations() map[string]*genai.FunctionDeclaration {
 		"code_oracle":          CodeOracleToolDeclaration(),
 		"pin_context":          PinContextToolDeclaration(),
 		"history_search":       HistorySearchToolDeclaration(),
+		"run_tests":            RunTestsToolDeclaration(),
+		"git_branch":           GitBranchToolDeclaration(),
+		"git_pr":               GitPRToolDeclaration(),
+	}
+}
+
+// RunTestsToolDeclaration returns the declaration for the run_tests tool.
+func RunTestsToolDeclaration() *genai.FunctionDeclaration {
+	return &genai.FunctionDeclaration{
+		Name:        "run_tests",
+		Description: "Runs project tests with automatic framework detection (Go, Python, Node, Rust). Parses output, reports failures with context, and provides coverage summary.",
+		Parameters: &genai.Schema{
+			Type: genai.TypeObject,
+			Properties: map[string]*genai.Schema{
+				"path": {
+					Type:        genai.TypeString,
+					Description: "Path to run tests in (default: working directory)",
+				},
+				"filter": {
+					Type:        genai.TypeString,
+					Description: "Test name filter/pattern",
+				},
+				"verbose": {
+					Type:        genai.TypeBoolean,
+					Description: "Show verbose output",
+				},
+				"coverage": {
+					Type:        genai.TypeBoolean,
+					Description: "Run with coverage reporting",
+				},
+				"framework": {
+					Type:        genai.TypeString,
+					Description: "Force framework: 'go', 'pytest', 'jest', 'cargo', 'auto'",
+					Enum:        []string{"auto", "go", "pytest", "jest", "cargo"},
+				},
+			},
+		},
+	}
+}
+
+// GitBranchToolDeclaration returns the declaration for the git_branch tool.
+func GitBranchToolDeclaration() *genai.FunctionDeclaration {
+	return &genai.FunctionDeclaration{
+		Name:        "git_branch",
+		Description: "Manages git branches: list, create, delete, switch (checkout), and merge branches.",
+		Parameters: &genai.Schema{
+			Type: genai.TypeObject,
+			Properties: map[string]*genai.Schema{
+				"action": {
+					Type:        genai.TypeString,
+					Description: "Branch action: 'list', 'create', 'delete', 'switch', 'merge', 'current'",
+					Enum:        []string{"list", "create", "delete", "switch", "merge", "current"},
+				},
+				"name": {
+					Type:        genai.TypeString,
+					Description: "Branch name",
+				},
+				"from": {
+					Type:        genai.TypeString,
+					Description: "Base branch to create from",
+				},
+				"force": {
+					Type:        genai.TypeBoolean,
+					Description: "Force operation",
+				},
+				"all": {
+					Type:        genai.TypeBoolean,
+					Description: "Show remote branches (for list)",
+				},
+			},
+			Required: []string{"action"},
+		},
+	}
+}
+
+// GitPRToolDeclaration returns the declaration for the git_pr tool.
+func GitPRToolDeclaration() *genai.FunctionDeclaration {
+	return &genai.FunctionDeclaration{
+		Name:        "git_pr",
+		Description: "Creates and manages GitHub pull requests using gh CLI. Supports auto-generating PR descriptions from commit history.",
+		Parameters: &genai.Schema{
+			Type: genai.TypeObject,
+			Properties: map[string]*genai.Schema{
+				"action": {
+					Type:        genai.TypeString,
+					Description: "PR action: 'create', 'list', 'view', 'checks', 'merge', 'close'",
+					Enum:        []string{"create", "list", "view", "checks", "merge", "close"},
+				},
+				"title": {
+					Type:        genai.TypeString,
+					Description: "PR title",
+				},
+				"body": {
+					Type:        genai.TypeString,
+					Description: "PR description",
+				},
+				"base": {
+					Type:        genai.TypeString,
+					Description: "Base branch",
+				},
+				"draft": {
+					Type:        genai.TypeBoolean,
+					Description: "Create as draft PR",
+				},
+				"pr_number": {
+					Type:        genai.TypeString,
+					Description: "PR number (for view/checks/merge/close)",
+				},
+				"auto_description": {
+					Type:        genai.TypeBoolean,
+					Description: "Auto-generate PR description from commits",
+				},
+			},
+			Required: []string{"action"},
+		},
 	}
 }
 
