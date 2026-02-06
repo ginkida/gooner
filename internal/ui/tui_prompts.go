@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// renderPermissionPrompt renders the permission prompt UI (Claude Code style — no bordered boxes).
+// renderPermissionPrompt renders the permission prompt UI (clean, compact style).
 func (m Model) renderPermissionPrompt() string {
 	if m.permRequest == nil {
 		return ""
@@ -18,29 +18,24 @@ func (m Model) renderPermissionPrompt() string {
 	valueStyle := lipgloss.NewStyle().Foreground(ColorText)
 	markerStyle := lipgloss.NewStyle().Foreground(ColorDim)
 
-	// Risk indicator
-	var riskLabel string
-	var riskStyle lipgloss.Style
-
+	// Risk indicator — colored dot instead of text label
+	var riskDot string
 	switch m.permRequest.RiskLevel {
 	case "high":
-		riskLabel = "HIGH RISK"
-		riskStyle = lipgloss.NewStyle().Bold(true).Foreground(ColorError)
+		riskDot = lipgloss.NewStyle().Foreground(ColorError).Render("●")
 	case "medium":
-		riskLabel = "MEDIUM RISK"
-		riskStyle = lipgloss.NewStyle().Bold(true).Foreground(ColorWarning)
+		riskDot = lipgloss.NewStyle().Foreground(ColorWarning).Render("●")
 	default:
-		riskLabel = "LOW RISK"
-		riskStyle = lipgloss.NewStyle().Bold(true).Foreground(ColorSuccess)
+		riskDot = lipgloss.NewStyle().Foreground(ColorSuccess).Render("●")
 	}
 
 	var builder strings.Builder
 
-	// Title line
-	builder.WriteString(titleStyle.Render("? Permission Required") + "  " + riskStyle.Render(riskLabel))
+	// Title line with colored dot
+	builder.WriteString(riskDot + " " + titleStyle.Render("Permission Required"))
 	builder.WriteString("\n")
 
-	// Tool info with ⎿ marker
+	// Tool info
 	builder.WriteString(markerStyle.Render("  ⎿  ") + labelStyle.Render("Tool: ") + valueStyle.Render(m.permRequest.ToolName))
 	builder.WriteString("\n")
 
@@ -57,55 +52,46 @@ func (m Model) renderPermissionPrompt() string {
 			}
 		}
 		if detail != "" {
-			builder.WriteString(markerStyle.Render("     ") + labelStyle.Render("Detail: ") + valueStyle.Render(detail))
+			builder.WriteString(markerStyle.Render("     ") + valueStyle.Render(detail))
 			builder.WriteString("\n")
 		}
 	}
 
-	// Reason
+	// Reason (compact)
 	if m.permRequest.Reason != "" {
 		reason := m.permRequest.Reason
 		if len(reason) > 60 {
 			reason = reason[:57] + "..."
 		}
-		builder.WriteString(markerStyle.Render("     ") + labelStyle.Render("Reason: ") + valueStyle.Render(reason))
+		builder.WriteString(markerStyle.Render("     ") + labelStyle.Render(reason))
 		builder.WriteString("\n")
 	}
 
 	builder.WriteString("\n")
 
-	// Options
+	// Inline options — single line
+	optionStyle := lipgloss.NewStyle().Foreground(ColorDim)
+	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(ColorSecondary)
+
 	options := []struct {
-		label    string
-		shortcut string
+		key   string
+		label string
 	}{
-		{"Allow once", "y"},
-		{"Allow for session", "a"},
-		{"Deny", "n"},
+		{"y", "Allow"},
+		{"a", "Always"},
+		{"n", "Deny"},
 	}
 
-	selectedStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(ColorSecondary)
-	normalStyle := lipgloss.NewStyle().
-		Foreground(ColorMuted)
-
+	var optParts []string
 	for i, opt := range options {
-		prefix := "  "
-		style := normalStyle
+		style := optionStyle
 		if i == m.permSelectedOption {
-			prefix = "> "
 			style = selectedStyle
 		}
-
-		optLabel := fmt.Sprintf("[%s] %s", opt.shortcut, opt.label)
-		builder.WriteString(prefix + style.Render(optLabel))
-		builder.WriteString("\n")
+		optParts = append(optParts, style.Render(opt.key+" "+opt.label))
 	}
 
-	builder.WriteString("\n")
-	builder.WriteString("\n")
-	builder.WriteString(normalStyle.Render("  Commands: Ctrl+P"))
+	builder.WriteString("  " + strings.Join(optParts, optionStyle.Render(" · ")) + optionStyle.Render(" · esc Cancel"))
 	builder.WriteString("\n")
 
 	return builder.String()

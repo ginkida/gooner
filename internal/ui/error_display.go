@@ -67,82 +67,65 @@ func (m *ErrorDisplayModel) SetExpanded(expanded bool) {
 	m.expanded = expanded
 }
 
-// View renders the enhanced error display.
+// View renders the enhanced error display — compact, no box.
+// Format:
+//
+//	✗ API error: rate limit exceeded
+//	  ↳ Wait 30s and retry, or check your API quota
 func (m ErrorDisplayModel) View() string {
 	if m.error == nil {
 		return ""
 	}
 
+	errorStyle := lipgloss.NewStyle().Foreground(ColorRose)
+	hintStyle := lipgloss.NewStyle().Foreground(ColorDim)
+	markerStyle := lipgloss.NewStyle().Foreground(ColorDim)
+
 	var sb strings.Builder
 
-	// Header with category icon and title
-	headerStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#FF6B6B")).
-		Background(lipgloss.Color("#2D1F1F")).
-		Padding(0, 1)
-
-	categoryIcon := m.getCategoryIcon()
+	// Main error line: ✗ Category: message
 	categoryTitle := m.getCategoryTitle()
-	sb.WriteString(headerStyle.Render(fmt.Sprintf("%s %s", categoryIcon, categoryTitle)))
-	sb.WriteString("\n\n")
-
-	// Error message
-	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FECACA"))
-	sb.WriteString(errorStyle.Render(m.error.OriginalError.Error()))
+	sb.WriteString(errorStyle.Render("✗ "+categoryTitle+": ") + hintStyle.Render(m.error.OriginalError.Error()))
 	sb.WriteString("\n")
 
-	// Context (what was being done)
-	if m.error.Context != "" {
-		contextStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
-		sb.WriteString(contextStyle.Render("While: "+m.error.Context) + "\n")
-	}
-
-	// Retry information
-	if m.error.RetryInfo != nil {
-		sb.WriteString("\n")
-		sb.WriteString(m.renderRetryInfo())
-	}
-
-	// Suggestions
+	// First suggestion as indented hint
 	if len(m.error.Suggestions) > 0 {
+		sb.WriteString(markerStyle.Render("  ↳ ") + hintStyle.Render(m.error.Suggestions[0]))
 		sb.WriteString("\n")
-		suggestHeaderStyle := lipgloss.NewStyle().Foreground(ColorSuccess).Bold(true)
-		sb.WriteString(suggestHeaderStyle.Render("Suggestions:") + "\n")
+	}
 
-		suggestStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#A7F3D0"))
-		for _, sug := range m.error.Suggestions {
-			sb.WriteString("   " + suggestStyle.Render("• "+sug) + "\n")
+	// Retry info (compact, inline)
+	if m.error.RetryInfo != nil && m.error.RetryInfo.CanRetry {
+		ri := m.error.RetryInfo
+		retryStr := fmt.Sprintf("  ↳ Retry %d/%d", ri.AttemptNumber, ri.MaxAttempts)
+		if ri.NextRetryIn > 0 {
+			retryStr += fmt.Sprintf(", next in %s", ri.NextRetryIn.Round(time.Second))
+		}
+		sb.WriteString(hintStyle.Render(retryStr))
+		sb.WriteString("\n")
+	}
+
+	// Expanded view: more suggestions, related files, docs
+	if m.expanded {
+		for i := 1; i < len(m.error.Suggestions); i++ {
+			sb.WriteString(markerStyle.Render("  ↳ ") + hintStyle.Render(m.error.Suggestions[i]))
+			sb.WriteString("\n")
+		}
+
+		if len(m.error.RelatedFiles) > 0 {
+			for _, file := range m.error.RelatedFiles {
+				sb.WriteString(hintStyle.Render("    " + file))
+				sb.WriteString("\n")
+			}
+		}
+
+		if m.error.Documentation != "" {
+			sb.WriteString(hintStyle.Render("  See: " + m.error.Documentation))
+			sb.WriteString("\n")
 		}
 	}
 
-	// Related files (expanded view)
-	if m.expanded && len(m.error.RelatedFiles) > 0 {
-		sb.WriteString("\n")
-		fileHeaderStyle := lipgloss.NewStyle().Foreground(ColorMuted).Bold(true)
-		sb.WriteString(fileHeaderStyle.Render("Related files:") + "\n")
-
-		fileStyle := lipgloss.NewStyle().Foreground(ColorDim)
-		for _, file := range m.error.RelatedFiles {
-			sb.WriteString("   " + fileStyle.Render(file) + "\n")
-		}
-	}
-
-	// Documentation link
-	if m.error.Documentation != "" {
-		sb.WriteString("\n")
-		docStyle := lipgloss.NewStyle().Foreground(ColorInfo).Italic(true)
-		sb.WriteString(docStyle.Render("See: "+m.error.Documentation) + "\n")
-	}
-
-	// Wrap in a box
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#FF6B6B")).
-		Padding(1).
-		MaxWidth(m.width)
-
-	return boxStyle.Render(sb.String())
+	return sb.String()
 }
 
 // ViewCompact renders a compact single-line error display.
@@ -151,25 +134,22 @@ func (m ErrorDisplayModel) ViewCompact() string {
 		return ""
 	}
 
-	icon := m.getCategoryIcon()
-	errorStyle := lipgloss.NewStyle().Foreground(ColorError).Bold(true)
-	msgStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FECACA"))
-	hintStyle := lipgloss.NewStyle().Foreground(ColorWarning)
+	errorStyle := lipgloss.NewStyle().Foreground(ColorRose)
+	msgStyle := lipgloss.NewStyle().Foreground(ColorDim)
 
 	errMsg := m.error.OriginalError.Error()
 	if len(errMsg) > 60 {
 		errMsg = errMsg[:57] + "..."
 	}
 
-	result := errorStyle.Render(icon+" Error: ") + msgStyle.Render(errMsg)
+	result := errorStyle.Render("✗ ") + msgStyle.Render(errMsg)
 
-	// Add first suggestion as hint
 	if len(m.error.Suggestions) > 0 {
 		hint := m.error.Suggestions[0]
 		if len(hint) > 40 {
 			hint = hint[:37] + "..."
 		}
-		result += " " + hintStyle.Render("→ "+hint)
+		result += " " + msgStyle.Render("→ "+hint)
 	}
 
 	return result

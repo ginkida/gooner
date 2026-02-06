@@ -47,46 +47,51 @@ var MessageIcons = map[string]string{
 	"error":   "✗",
 	"warning": "⚠",
 	"info":    "ℹ",
-	"hint":    "💡",
+	"hint":    "›",
 	"loading": "◐",
-	"done":    "✨",
+	"done":    "✓",
 	"pending": "○",
 	"active":  "●",
 	"skip":    "↷",
 }
 
-// ToolIcons provides contextual icons for different tool calls - Enhanced with more expressive icons
+// ToolIcons provides minimal Unicode glyphs for tool calls — no emoji, consistent rendering.
 var ToolIcons = map[string]string{
-	"read":           "📄",
-	"write":          "✨",
-	"edit":           "🔧",
-	"bash":           "💻",
-	"glob":           "📁",
-	"grep":           "🔍",
-	"todo":           "📋",
-	"diff":           "📊",
-	"tree":           "🌲",
-	"web_fetch":      "🌍",
-	"web_search":     "🔎",
-	"list_files":     "📂",
-	"file_search":    "🔍",
-	"code_search":    "💡",
-	"ask_question":   "🤔",
-	"git_log":        "📜",
-	"git_diff":       "🔄",
-	"git_blame":      "👤",
-	"commit":         "✅",
-	"undo":           "↩️",
-	"redo":           "↪️",
-	"memory":         "🧠",
-	"pattern_search": "🎯",
-	"refactor":       "⚗️",
-	"code_graph":     "🕸️",
-	"batch":          "📦",
-	"task":           "🎬",
-	"test":           "🧪",
-	"build":          "🔨",
-	"default":        "⚙️",
+	"read":           "▸",
+	"write":          "✦",
+	"edit":           "△",
+	"bash":           "$",
+	"glob":           "◇",
+	"grep":           "⊙",
+	"todo":           "☐",
+	"diff":           "±",
+	"tree":           "⊞",
+	"web_fetch":      "↗",
+	"web_search":     "↗",
+	"list_files":     "◇",
+	"list_dir":       "◇",
+	"file_search":    "⊙",
+	"code_search":    "⊙",
+	"ask_question":   "?",
+	"git_log":        "⎇",
+	"git_diff":       "⎇",
+	"git_blame":      "⎇",
+	"git_add":        "⎇",
+	"git_commit":     "⎇",
+	"git_status":     "⎇",
+	"commit":         "⎇",
+	"undo":           "↩",
+	"redo":           "↪",
+	"memory":         "◈",
+	"memorize":       "◈",
+	"pattern_search": "⊙",
+	"refactor":       "△",
+	"code_graph":     "◈",
+	"batch":          "▪",
+	"task":           "▪",
+	"test":           "▪",
+	"build":          "▪",
+	"default":        "·",
 }
 
 // GetToolIcon returns the icon for a given tool name.
@@ -432,37 +437,31 @@ func (s *Styles) FormatAssistantStreaming(msg string) string {
 
 // FormatToolCall formats a tool call notification.
 func (s *Styles) FormatToolCall(name string) string {
-	icon := GetToolIcon(name)
-	return s.ToolCall.Render(icon + " " + name)
+	return s.ToolCall.Render(name)
 }
 
 // FormatToolCallWithArgs formats a tool call with brief argument summary.
 func (s *Styles) FormatToolCallWithArgs(name string, args map[string]any) string {
-	icon := GetToolIcon(name)
 	summary := formatArgsSummary(args)
 	if summary != "" {
-		return s.ToolCall.Render(icon + " " + name + " " + summary)
+		return s.ToolCall.Render(name + " " + summary)
 	}
-	return s.ToolCall.Render(icon + " " + name)
+	return s.ToolCall.Render(name)
 }
 
 // FormatToolExecuting formats a tool that is currently executing.
 func (s *Styles) FormatToolExecuting(name string, args map[string]any) string {
-	icon := GetToolIcon(name)
 	summary := formatArgsSummary(args)
 
-	// Animated spinner for executing tools
 	spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	idx := int(time.Now().Unix()/100) % len(spinner)
 
-	exeStyle := lipgloss.NewStyle().
-		Foreground(ColorInfo).
-		Bold(true)
+	exeStyle := lipgloss.NewStyle().Foreground(ColorDim)
 
 	if summary != "" {
-		return exeStyle.Render(spinner[idx] + " " + icon + " " + name + " " + summary + "...")
+		return exeStyle.Render(spinner[idx] + " " + name + " " + summary)
 	}
-	return exeStyle.Render(spinner[idx] + " " + icon + " " + name + "...")
+	return exeStyle.Render(spinner[idx] + " " + name)
 }
 
 // FormatToolExecutingBlock formats a tool execution as a compact line.
@@ -486,50 +485,39 @@ func (s *Styles) FormatToolExecutingBlock(name string, args map[string]any) stri
 
 // FormatToolSuccess formats a successful tool result.
 func (s *Styles) FormatToolSuccess(name string, duration time.Duration) string {
-	icon := GetToolIcon(name)
-	successStyle := lipgloss.NewStyle().
-		Foreground(ColorSuccess)
+	successStyle := lipgloss.NewStyle().Foreground(ColorSuccess)
+	dimStyle := lipgloss.NewStyle().Foreground(ColorDim)
 
 	durationStr := ""
 	if duration < time.Second {
-		durationStr = fmt.Sprintf("%.0fms", float64(duration.Milliseconds()))
+		durationStr = fmt.Sprintf("%dms", duration.Milliseconds())
 	} else if duration < time.Minute {
 		durationStr = fmt.Sprintf("%.1fs", duration.Seconds())
 	}
 
 	if durationStr != "" {
-		return successStyle.Render("✓ " + icon + " " + name + " (" + durationStr + ")")
+		return successStyle.Render("✓ "+name) + "  " + dimStyle.Render(durationStr)
 	}
-	return successStyle.Render("✓ " + icon + " " + name)
+	return successStyle.Render("✓ " + name)
 }
 
-// FormatToolSuccessBlock formats a successful tool result as a compact line (Claude Code style).
-// Format: ✓ icon name • summary • duration
+// FormatToolSuccessBlock formats a successful tool result as a compact line.
+// Format: ✓ name  summary  duration
 func (s *Styles) FormatToolSuccessBlock(name string, duration time.Duration, resultSummary string) string {
-	icon := GetToolIcon(name)
-	iconColor := GetToolIconColor(name)
-
 	checkStyle := lipgloss.NewStyle().Foreground(ColorSuccess)
-	iconStyle := lipgloss.NewStyle().Foreground(iconColor)
-	nameStyle := lipgloss.NewStyle().Foreground(ColorSuccess)
-	summaryStyle := lipgloss.NewStyle().Foreground(ColorMuted)
-	dimStyle := lipgloss.NewStyle().Foreground(ColorDim)
+	nameStyle := lipgloss.NewStyle().Foreground(ColorMuted)
+	summaryStyle := lipgloss.NewStyle().Foreground(ColorDim)
 
 	var result strings.Builder
 
-	// ✓ icon name (colored icon)
 	result.WriteString(checkStyle.Render("✓ "))
-	result.WriteString(iconStyle.Render(icon))
-	result.WriteString(" ")
 	result.WriteString(nameStyle.Render(name))
 
-	// • summary
 	if resultSummary != "" {
-		result.WriteString(dimStyle.Render(" • "))
+		result.WriteString("  ")
 		result.WriteString(summaryStyle.Render(resultSummary))
 	}
 
-	// • duration
 	durationStr := ""
 	durationColor := ColorDim
 	if duration < time.Second {
@@ -547,7 +535,7 @@ func (s *Styles) FormatToolSuccessBlock(name string, duration time.Duration, res
 
 	if durationStr != "" {
 		timingStyle := lipgloss.NewStyle().Foreground(durationColor)
-		result.WriteString(dimStyle.Render(" • "))
+		result.WriteString("  ")
 		result.WriteString(timingStyle.Render(durationStr))
 	}
 
@@ -556,12 +544,10 @@ func (s *Styles) FormatToolSuccessBlock(name string, duration time.Duration, res
 
 // FormatToolError formats a failed tool result.
 func (s *Styles) FormatToolError(name string, err error) string {
-	icon := GetToolIcon(name)
-	errorStyle := lipgloss.NewStyle().
-		Foreground(ColorError).
-		Bold(true)
+	errorStyle := lipgloss.NewStyle().Foreground(ColorRose)
+	msgStyle := lipgloss.NewStyle().Foreground(ColorDim)
 
-	return errorStyle.Render("✗ " + icon + " " + name + ": " + err.Error())
+	return errorStyle.Render("✗ "+name) + "  " + msgStyle.Render(err.Error())
 }
 
 // formatArgsSummary creates a brief summary of tool arguments.
@@ -701,7 +687,7 @@ func (s *Styles) FormatSuccess(msg string) string {
 		Foreground(lipgloss.Color("#A7F3D0")). // Softer green (Emerald 200)
 		PaddingLeft(2)
 
-	header := headerStyle.Render("✨ " + "Success!")
+	header := headerStyle.Render("✓ Success")
 	body := bodyStyle.Render(msg)
 
 	return s.SuccessBox.Render(header + "\n" + body)
@@ -718,7 +704,7 @@ func (s *Styles) FormatInfo(msg string) string {
 		Foreground(lipgloss.Color("#A5F3FC")). // Softer cyan (Cyan 200)
 		PaddingLeft(2)
 
-	header := headerStyle.Render("ℹ️ " + "Info")
+	header := headerStyle.Render("ℹ Info")
 	body := bodyStyle.Render(msg)
 
 	return s.InfoBox.Render(header + "\n" + body)
@@ -735,7 +721,7 @@ func (s *Styles) FormatWarningBox(msg string) string {
 		Foreground(lipgloss.Color("#FDE68A")). // Softer amber (Amber 200)
 		PaddingLeft(2)
 
-	header := headerStyle.Render("⚠️ " + "Heads up!")
+	header := headerStyle.Render("⚠ Warning")
 	body := bodyStyle.Render(msg)
 
 	return s.WarningBox.Render(header + "\n" + body)
@@ -973,36 +959,25 @@ func (s *Styles) RenderMessageSeparator() string {
 	return separatorStyle.Render(strings.Repeat("─", 60))
 }
 
-// FormatThinkingIndicator formats the thinking/processing indicator with rotating spinner.
+// FormatThinkingIndicator formats the thinking/processing indicator with braille spinner.
 func (s *Styles) FormatThinkingIndicator() string {
-	// Rotating spinner frames
-	spinners := []string{"◐", "◓", "◑", "◒"}
+	spinners := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	idx := int(time.Now().UnixMilli()/100) % len(spinners)
 
-	spinnerStyle := lipgloss.NewStyle().
-		Foreground(ColorGradient1).
-		Bold(true)
-	textStyle := lipgloss.NewStyle().
-		Foreground(ColorInfo).
-		Italic(true)
+	spinnerStyle := lipgloss.NewStyle().Foreground(ColorDim)
+	textStyle := lipgloss.NewStyle().Foreground(ColorDim)
 
-	return spinnerStyle.Render(spinners[idx]) + textStyle.Render(" Thinking...")
+	return spinnerStyle.Render(spinners[idx]) + textStyle.Render(" Thinking")
 }
 
 // FormatThinkingIndicatorWithTokens formats the thinking indicator with token usage.
 func (s *Styles) FormatThinkingIndicatorWithTokens(usedTokens, maxTokens int) string {
-	// Rotating spinner frames
-	spinners := []string{"◐", "◓", "◑", "◒"}
+	spinners := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	idx := int(time.Now().UnixMilli()/100) % len(spinners)
 
-	spinnerStyle := lipgloss.NewStyle().
-		Foreground(ColorGradient1).
-		Bold(true)
-	textStyle := lipgloss.NewStyle().
-		Foreground(ColorInfo).
-		Italic(true)
-	dimStyle := lipgloss.NewStyle().
-		Foreground(ColorDim)
+	spinnerStyle := lipgloss.NewStyle().Foreground(ColorDim)
+	textStyle := lipgloss.NewStyle().Foreground(ColorDim)
+	dimStyle := lipgloss.NewStyle().Foreground(ColorDim)
 
 	// Format token count
 	var tokenStr string
@@ -1018,8 +993,8 @@ func (s *Styles) FormatThinkingIndicatorWithTokens(usedTokens, maxTokens int) st
 		maxStr = fmt.Sprintf("%d", maxTokens)
 	}
 
-	return spinnerStyle.Render(spinners[idx]) + textStyle.Render(" Thinking...") +
-		dimStyle.Render("          [tokens: "+tokenStr+"/"+maxStr+"]")
+	return spinnerStyle.Render(spinners[idx]) + textStyle.Render(" Thinking") +
+		dimStyle.Render("  ["+tokenStr+"/"+maxStr+"]")
 }
 
 // FormatPlanStepHeader formats a plan step header for delegated execution output.
@@ -1130,5 +1105,5 @@ func (s *Styles) FormatHint(text string) string {
 	iconStyle := lipgloss.NewStyle().
 		Foreground(ColorAccent)
 
-	return iconStyle.Render("💡 ") + hintStyle.Render(text)
+	return iconStyle.Render("› ") + hintStyle.Render(text)
 }

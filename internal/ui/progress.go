@@ -229,9 +229,9 @@ func (m ProgressModel) View() string {
 		Foreground(ColorHighlight)
 
 	if m.isComplete {
-		builder.WriteString(headerStyle.Render("✅ " + m.title + " Complete"))
+		builder.WriteString(headerStyle.Render("✓ " + m.title + " Complete"))
 	} else if m.isPaused {
-		builder.WriteString(headerStyle.Render("⏸️ " + m.title + " (Paused)"))
+		builder.WriteString(headerStyle.Render("‖ " + m.title + " (Paused)"))
 	} else {
 		builder.WriteString(spinnerStyle.Render(spinners[spinnerIdx]) + " " + headerStyle.Render(m.title))
 	}

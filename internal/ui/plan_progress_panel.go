@@ -289,34 +289,34 @@ func (p *PlanProgressPanel) View(width int) string {
 		dimStyle.Render("("+elapsedStr+")")
 
 	// Premium 3D-like border using distinct characters
-	content.WriteString(borderStyle.Render("┏") + borderStyle.Render(strings.Repeat("━", panelWidth-1)) + borderStyle.Render("┓"))
+	content.WriteString(borderStyle.Render("╭") + borderStyle.Render(strings.Repeat("─", panelWidth-1)) + borderStyle.Render("╮"))
 	content.WriteString("\n")
 
 	// Title line stylized as a title bar
 	titleBar := "  " + headerLine
-	content.WriteString(borderStyle.Render("┃"))
+	content.WriteString(borderStyle.Render("│"))
 	content.WriteString(titleBar)
 	padding := panelWidth - 1 - lipgloss.Width(titleBar)
 	if padding > 0 {
 		content.WriteString(strings.Repeat(" ", padding))
 	}
-	content.WriteString(borderStyle.Render("┃"))
+	content.WriteString(borderStyle.Render("│"))
 	content.WriteString("\n")
 
-	content.WriteString(borderStyle.Render("┣") + borderStyle.Render(strings.Repeat("━", panelWidth-1)) + borderStyle.Render("┫"))
+	content.WriteString(borderStyle.Render("├") + borderStyle.Render(strings.Repeat("─", panelWidth-1)) + borderStyle.Render("┤"))
 	content.WriteString("\n")
 
 	// Steps
 	if !p.collapsed {
 		for _, step := range p.steps {
 			stepLine := p.renderStep(step, panelWidth-4)
-			content.WriteString(borderStyle.Render("┃ "))
+			content.WriteString(borderStyle.Render("│ "))
 			content.WriteString(stepLine)
 			padding := panelWidth - 3 - lipgloss.Width(stepLine)
 			if padding > 0 {
 				content.WriteString(strings.Repeat(" ", padding))
 			}
-			content.WriteString(borderStyle.Render(" ┃"))
+			content.WriteString(borderStyle.Render(" │"))
 			content.WriteString("\n")
 		}
 	} else {
@@ -350,7 +350,7 @@ func (p *PlanProgressPanel) View(width int) string {
 
 	// Current tool activity (live indicator)
 	if p.currentTool != "" {
-		content.WriteString(borderStyle.Render("┣") + borderStyle.Render(strings.Repeat("─", panelWidth-1)) + borderStyle.Render("┫"))
+		content.WriteString(borderStyle.Render("├") + borderStyle.Render(strings.Repeat("─", panelWidth-1)) + borderStyle.Render("┤"))
 		content.WriteString("\n")
 
 		// Animated spinner
@@ -372,20 +372,20 @@ func (p *PlanProgressPanel) View(width int) string {
 			}
 		}
 
-		content.WriteString(borderStyle.Render("┃"))
+		content.WriteString(borderStyle.Render("│"))
 		content.WriteString(toolLine)
 		padding := panelWidth - 1 - lipgloss.Width(toolLine)
 		if padding > 0 {
 			content.WriteString(strings.Repeat(" ", padding))
 		}
-		content.WriteString(borderStyle.Render("┃"))
+		content.WriteString(borderStyle.Render("│"))
 		content.WriteString("\n")
 	}
 
 	// Recent activity log
 	if len(p.activities) > 0 {
 		if p.currentTool == "" {
-			content.WriteString(borderStyle.Render("┣") + borderStyle.Render(strings.Repeat("─", panelWidth-1)) + borderStyle.Render("┫"))
+			content.WriteString(borderStyle.Render("├") + borderStyle.Render(strings.Repeat("─", panelWidth-1)) + borderStyle.Render("┤"))
 			content.WriteString("\n")
 		}
 
@@ -410,19 +410,19 @@ func (p *PlanProgressPanel) View(width int) string {
 				actLine += " " + dimStyle.Render(ageStr)
 			}
 
-			content.WriteString(borderStyle.Render("┃"))
+			content.WriteString(borderStyle.Render("│"))
 			content.WriteString(actLine)
 			padding := panelWidth - 1 - lipgloss.Width(actLine)
 			if padding > 0 {
 				content.WriteString(strings.Repeat(" ", padding))
 			}
-			content.WriteString(borderStyle.Render("┃"))
+			content.WriteString(borderStyle.Render("│"))
 			content.WriteString("\n")
 		}
 	}
 
 	// Footer
-	content.WriteString(borderStyle.Render("┗" + strings.Repeat("━", panelWidth-1) + "┛"))
+	content.WriteString(borderStyle.Render("╰" + strings.Repeat("─", panelWidth-1) + "╯"))
 
 	return content.String()
 }

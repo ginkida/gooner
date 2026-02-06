@@ -1695,93 +1695,57 @@ func (m Model) View() string {
 		builder.WriteString("\n")
 	}
 
-	// Processing indicator with enhanced styling
+	// Processing indicator — minimal braille spinner
 	if m.state == StateProcessing || m.state == StateStreaming {
-		status := m.spinner.View() + " "
+		dimStyle := lipgloss.NewStyle().Foreground(ColorDim)
+
+		// Braille spinner
+		spinnerFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		elapsed := time.Since(m.streamStartTime)
+		frameIdx := int(elapsed.Milliseconds()/80) % len(spinnerFrames)
+		spinner := dimStyle.Render(spinnerFrames[frameIdx])
+
 		if m.currentTool != "" {
-			// Tool execution status - clean Claude Code style
+			// Tool execution: ⠋ bash  go build ./...  3.2s
+			status := spinner + " " + dimStyle.Render(m.currentTool)
 
-			// Tool name without emoji icon
-			status += m.styles.ToolCall.Render(capitalizeToolName(m.currentTool))
-
-			// Show tool info (file path, command, etc.) - more visible with gradient
 			if m.currentToolInfo != "" {
-				infoStyle := lipgloss.NewStyle().
-					Foreground(ColorGradient2). // Indigo for contrast
-					Bold(true)
+				infoStyle := lipgloss.NewStyle().Foreground(ColorMuted)
 				status += "  " + infoStyle.Render(m.currentToolInfo)
 			}
 
-			// Color-coded duration (warning if >5s, error if >30s) — guard against zero time
 			if !m.toolStartTime.IsZero() {
-				elapsed := time.Since(m.toolStartTime)
-				durationStr := formatDuration(elapsed)
-				var durationStyle lipgloss.Style
-				if elapsed > 30*time.Second {
-					durationStyle = lipgloss.NewStyle().Foreground(ColorRose)
-				} else if elapsed > 5*time.Second {
-					durationStyle = lipgloss.NewStyle().Foreground(ColorWarning)
-				} else {
-					durationStyle = lipgloss.NewStyle().Foreground(ColorMint)
+				toolElapsed := time.Since(m.toolStartTime)
+				durationColor := ColorDim
+				if toolElapsed > 30*time.Second {
+					durationColor = ColorRose
+				} else if toolElapsed > 5*time.Second {
+					durationColor = ColorWarning
 				}
-				status += " " + durationStyle.Render(durationStr)
+				status += "  " + lipgloss.NewStyle().Foreground(durationColor).Render(formatDuration(toolElapsed))
 			}
+			builder.WriteString(status)
 		} else if m.state == StateProcessing {
-			// Thinking phase — show elapsed time for feedback
-			elapsed := time.Since(m.streamStartTime)
-			thinkStyle := lipgloss.NewStyle().
-				Foreground(ColorGradient1).
-				Bold(true)
-			dimStyle := lipgloss.NewStyle().Foreground(ColorDim)
+			// Thinking: ⠋ Thinking  5s
+			status := spinner + " " + dimStyle.Render("Thinking")
 
-			status += thinkStyle.Render("Thinking")
-
-			// Smooth animated dots using 300ms frame intervals
-			dotFrames := []string{"", ".", "..", "..."}
-			frameIdx := int(elapsed.Milliseconds()/300) % len(dotFrames)
-			dots := dotFrames[frameIdx]
-			status += thinkStyle.Render(dots)
-			// Pad to fixed width so status bar doesn't jump
-			status += strings.Repeat(" ", 3-len(dots))
-
-			// Show elapsed time after 2 seconds
-			if elapsed >= 2*time.Second {
-				durationStr := formatDuration(elapsed)
-				status += " " + dimStyle.Render(durationStr)
+			// Show elapsed after 3 seconds
+			if elapsed >= 3*time.Second {
+				status += "  " + dimStyle.Render(formatDuration(elapsed))
 			}
 
-			// Show plan step context if plan is executing
+			// Plan step context
 			if m.planProgress != nil && m.planProgressMode {
-				stepInfo := fmt.Sprintf(" [step %d/%d: %s]",
+				stepInfo := fmt.Sprintf(" [step %d/%d]",
 					m.planProgress.CurrentStepID,
-					m.planProgress.TotalSteps,
-					m.planProgress.CurrentTitle)
-				if len(stepInfo) > 50 {
-					stepInfo = stepInfo[:47] + "...]"
-				}
+					m.planProgress.TotalSteps)
 				status += " " + dimStyle.Render(stepInfo)
 			}
-
-			// Hint for ESC after 2 seconds
-			if elapsed >= 2*time.Second {
-				hintStyle := lipgloss.NewStyle().Foreground(ColorMuted).Italic(true)
-				status += "  " + hintStyle.Render("(ESC to cancel)")
-			}
+			builder.WriteString(status)
 		} else {
-			// Streaming phase — show activity
-			elapsed := time.Since(m.streamStartTime)
-			streamStyle := lipgloss.NewStyle().
-				Foreground(ColorGradient2).
-				Bold(true)
-			dimStyle := lipgloss.NewStyle().Foreground(ColorDim)
-
-			status += streamStyle.Render("Generating...")
-
-			if elapsed >= 2*time.Second {
-				status += " " + dimStyle.Render(formatDuration(elapsed))
-			}
+			// Streaming: just the spinner, content is the feedback
+			builder.WriteString(spinner)
 		}
-		builder.WriteString(status)
 		builder.WriteString("\n")
 	}
 

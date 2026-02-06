@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -256,94 +255,55 @@ func (p *MarkdownStreamParser) RenderCodeBlock(block RenderedBlock, width int) s
 	return result.String()
 }
 
-// renderCodeBlockWithBorder renders a code block with rounded corners and line numbers.
+// renderCodeBlockWithBorder renders a code block with clean thin borders.
+// Top: ─── go ─── (language label centered in thin line)
+// Bottom: ──────── (plain thin line)
 func (p *MarkdownStreamParser) renderCodeBlockWithBorder(filename, lang, content string, width int) string {
 	var result strings.Builder
 
-	// Calculate width
 	contentWidth := width - 4
 	if contentWidth < 40 {
 		contentWidth = 40
 	}
 
 	lines := strings.Split(content, "\n")
-	lineCount := len(lines)
 
-	// Calculate line number width
-	lineNumWidth := len(fmt.Sprintf("%d", lineCount))
-	if lineNumWidth < 2 {
-		lineNumWidth = 2
-	}
-
-	// Header components
-	filenameText := ""
-	langText := ""
+	// Determine label for the header
+	label := lang
 	if filename != "" {
-		filenameText = filename
-	}
-	if lang != "" {
-		langText = lang
-	}
-
-	// Top border with filename on left and language on right (rounded corners)
-	topLeft := "╭─"
-	topRight := "─╮"
-
-	// Build header line
-	var headerLine strings.Builder
-	headerLine.WriteString(p.styles.Dim.Render(topLeft))
-
-	if filenameText != "" {
-		headerLine.WriteString(p.styles.Accent.Render(" " + filenameText + " "))
-		usedWidth := len(filenameText) + 4
-		remainingWidth := contentWidth - usedWidth
-
-		if langText != "" && remainingWidth > len(langText)+4 {
-			// Add separator and language on right
-			sepWidth := remainingWidth - len(langText) - 3
-			if sepWidth < 0 {
-				sepWidth = 0
-			}
-			headerLine.WriteString(p.styles.Dim.Render(strings.Repeat("─", sepWidth)))
-			headerLine.WriteString(p.styles.CodeBlockHeader.Render(" " + langText + " "))
-		} else {
-			headerLine.WriteString(p.styles.Dim.Render(strings.Repeat("─", remainingWidth-2)))
+		label = filename
+		if lang != "" {
+			label = filename + " · " + lang
 		}
-	} else if langText != "" {
-		headerLine.WriteString(p.styles.CodeBlockHeader.Render(" " + langText + " "))
-		remainingWidth := contentWidth - len(langText) - 4
-		if remainingWidth < 0 {
-			remainingWidth = 0
+	}
+
+	// Top border: ─── label ───
+	if label != "" {
+		labelLen := len(label) + 2 // spaces around label
+		sideLen := (contentWidth - labelLen) / 2
+		if sideLen < 3 {
+			sideLen = 3
 		}
-		headerLine.WriteString(p.styles.Dim.Render(strings.Repeat("─", remainingWidth)))
+		leftDash := strings.Repeat("─", sideLen)
+		rightDash := strings.Repeat("─", contentWidth-sideLen-labelLen)
+		if len(rightDash) < 0 {
+			rightDash = "───"
+		}
+		result.WriteString(p.styles.Dim.Render(leftDash+" ") + p.styles.CodeBlockHeader.Render(label) + p.styles.Dim.Render(" "+rightDash))
 	} else {
-		headerLine.WriteString(p.styles.Dim.Render(strings.Repeat("─", contentWidth)))
+		result.WriteString(p.styles.Dim.Render(strings.Repeat("─", contentWidth)))
 	}
-
-	headerLine.WriteString(p.styles.Dim.Render(topRight))
-	result.WriteString(headerLine.String())
 	result.WriteString("\n")
 
-	// Content with side borders and line numbers
-	lineNumStyle := p.styles.Dim
-	for i, line := range lines {
-		lineNum := fmt.Sprintf("%*d", lineNumWidth, i+1)
-		result.WriteString(p.styles.Dim.Render("│ "))
-		result.WriteString(lineNumStyle.Render(lineNum + " │ "))
+	// Content — 2-space indent, no side borders, no line numbers
+	for _, line := range lines {
+		result.WriteString("  ")
 		result.WriteString(line)
-
-		// Pad to width if needed
-		lineWidth := visibleWidth(line)
-		usedWidth := lineNumWidth + 5 + lineWidth
-		if usedWidth < contentWidth {
-			result.WriteString(strings.Repeat(" ", contentWidth-usedWidth))
-		}
-		result.WriteString(p.styles.Dim.Render(" │"))
 		result.WriteString("\n")
 	}
 
-	// Bottom border (rounded corners)
-	result.WriteString(p.styles.Dim.Render("╰" + strings.Repeat("─", contentWidth+2) + "╯"))
+	// Bottom border: thin line
+	result.WriteString(p.styles.Dim.Render(strings.Repeat("─", contentWidth)))
 	result.WriteString("\n")
 
 	return result.String()

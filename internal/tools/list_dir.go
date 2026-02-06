@@ -5,10 +5,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"google.golang.org/genai"
 
 	"gokin/internal/security"
+)
+
+const (
+	// maxListDirEntries limits directory listing to prevent API payload overflow.
+	maxListDirEntries = 2000
 )
 
 // ListDirTool lists the contents of a directory.
@@ -96,14 +102,25 @@ func (t *ListDirTool) Execute(ctx context.Context, args map[string]any) (ToolRes
 		return NewSuccessResult("(empty)"), nil
 	}
 
-	var output string
+	truncated := false
+	if len(entries) > maxListDirEntries {
+		truncated = true
+		entries = entries[:maxListDirEntries]
+	}
+
+	var builder strings.Builder
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() {
 			name += "/"
 		}
-		output += name + "\n"
+		builder.WriteString(name)
+		builder.WriteByte('\n')
 	}
 
-	return NewSuccessResult(output), nil
+	if truncated {
+		builder.WriteString(fmt.Sprintf("\n... (output truncated: showing %d entries)", maxListDirEntries))
+	}
+
+	return NewSuccessResult(builder.String()), nil
 }

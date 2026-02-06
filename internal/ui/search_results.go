@@ -361,7 +361,7 @@ func (m SearchResultsModel) View() string {
 		Foreground(ColorHighlight).
 		Padding(0, 1)
 
-	builder.WriteString(headerStyle.Render("🔍 Search Results"))
+	builder.WriteString(headerStyle.Render("Search Results"))
 	builder.WriteString("\n\n")
 
 	// Query info

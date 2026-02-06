@@ -334,10 +334,10 @@ func (m *FileBrowserModel) formatEntryLine(index int, entry FileEntry) string {
 	var icon string
 	var nameStyle lipgloss.Style
 	if entry.IsDir {
-		icon = "📁"
+		icon = "▸"
 		nameStyle = dirStyle
 	} else {
-		icon = m.getFileIcon(entry.Name)
+		icon = "·"
 		nameStyle = fileStyle
 	}
 
@@ -373,76 +373,58 @@ func (m *FileBrowserModel) formatEntryLine(index int, entry FileEntry) string {
 	return normalStyle.Render(line)
 }
 
-// getFileIcon returns an appropriate icon for a file type.
+// getFileIcon returns a simple Unicode glyph for a file type.
 func (m *FileBrowserModel) getFileIcon(name string) string {
 	ext := strings.ToLower(filepath.Ext(name))
 
 	iconMap := map[string]string{
-		".go":    "🐹",
-		".py":    "🐍",
-		".js":    "📜",
-		".ts":    "📘",
-		".tsx":   "⚛️",
-		".jsx":   "⚛️",
-		".rs":    "🦀",
-		".rb":    "💎",
-		".java":  "☕",
-		".c":     "🔧",
-		".cpp":   "🔧",
-		".h":     "🔧",
-		".cs":    "🔷",
-		".php":   "🐘",
-		".swift": "🕊️",
-		".kt":    "🎯",
-		".md":    "📝",
-		".json":  "📋",
-		".yaml":  "⚙️",
-		".yml":   "⚙️",
-		".toml":  "⚙️",
-		".html":  "🌐",
-		".css":   "🎨",
-		".scss":  "🎨",
-		".sql":   "🗃️",
-		".sh":    "💻",
-		".bash":  "💻",
-		".zsh":   "💻",
-		".txt":   "📄",
-		".log":   "📋",
-		".pdf":   "📕",
-		".png":   "🖼️",
-		".jpg":   "🖼️",
-		".jpeg":  "🖼️",
-		".gif":   "🖼️",
-		".svg":   "🎨",
-		".zip":   "📦",
-		".tar":   "📦",
-		".gz":    "📦",
-		".lock":  "🔒",
+		".go":    "◆",
+		".py":    "◇",
+		".js":    "△",
+		".ts":    "△",
+		".tsx":   "△",
+		".jsx":   "△",
+		".rs":    "▪",
+		".rb":    "◇",
+		".java":  "◇",
+		".c":     "▪",
+		".cpp":   "▪",
+		".h":     "▪",
+		".cs":    "◇",
+		".php":   "◇",
+		".swift": "◇",
+		".kt":    "◇",
+		".md":    "·",
+		".json":  "·",
+		".yaml":  "·",
+		".yml":   "·",
+		".toml":  "·",
+		".html":  "△",
+		".css":   "△",
+		".scss":  "△",
+		".sql":   "·",
+		".sh":    "$",
+		".bash":  "$",
+		".zsh":   "$",
+		".txt":   "·",
+		".log":   "·",
+		".pdf":   "·",
+		".png":   "·",
+		".jpg":   "·",
+		".jpeg":  "·",
+		".gif":   "·",
+		".svg":   "·",
+		".zip":   "·",
+		".tar":   "·",
+		".gz":    "·",
+		".lock":  "·",
 	}
 
 	if icon, ok := iconMap[ext]; ok {
 		return icon
 	}
 
-	// Check by filename
-	base := strings.ToLower(filepath.Base(name))
-	filenameMap := map[string]string{
-		"dockerfile":   "🐳",
-		"makefile":     "🔨",
-		".gitignore":   "📝",
-		".env":         "🔐",
-		"readme.md":    "📖",
-		"license":      "📜",
-		"go.mod":       "🐹",
-		"package.json": "📦",
-		"cargo.toml":   "🦀",
-	}
-
-	if icon, ok := filenameMap[base]; ok {
-		return icon
-	}
-
-	return "📄"
+	return "·"
 }
 
 // formatSize formats a file size for display.
@@ -682,7 +664,7 @@ func (m FileBrowserModel) View() string {
 		Foreground(ColorHighlight).
 		Padding(0, 1)
 
-	builder.WriteString(headerStyle.Render("📂 File Browser"))
+	builder.WriteString(headerStyle.Render("Files"))
 	builder.WriteString("\n\n")
 
 	// Current path

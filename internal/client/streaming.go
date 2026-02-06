@@ -61,8 +61,15 @@ func ProcessStream(ctx context.Context, sr *StreamingResponse, handler *StreamHa
 				}
 			}
 
-			// Accumulate original Parts (preserves ThoughtSignature for Gemini 3)
-			resp.Parts = append(resp.Parts, chunk.Parts...)
+			// Accumulate original Parts (preserves ThoughtSignature for Gemini 3).
+			// Skip FunctionCall parts since they are already added explicitly above;
+			// including them again causes duplicate FunctionCalls in history which
+			// triggers Gemini API 400 errors (mismatched call/response count).
+			for _, part := range chunk.Parts {
+				if part != nil && part.FunctionCall == nil {
+					resp.Parts = append(resp.Parts, part)
+				}
+			}
 
 			// Keep the latest non-zero usage metadata (typically from the final chunk)
 			if chunk.InputTokens > 0 {

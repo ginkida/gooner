@@ -70,7 +70,7 @@ type InputModel struct {
 // NewInputModel creates a new input model.
 func NewInputModel(styles *Styles) InputModel {
 	ta := textarea.New()
-	ta.Placeholder = "Type a message or /command... (Tab to complete)"
+	ta.Placeholder = "Message or /command (Tab: complete)"
 	ta.Focus()
 	ta.CharLimit = 10000
 	ta.ShowLineNumbers = false
@@ -567,7 +567,7 @@ func (m InputModel) View() string {
 		resultStyle := lipgloss.NewStyle().
 			Foreground(ColorMuted)
 
-		result.WriteString(searchStyle.Render("(reverse-i-search)"))
+		result.WriteString(searchStyle.Render("search:"))
 		result.WriteString(queryStyle.Render("`" + m.historySearchQuery + "'"))
 		result.WriteString(": ")
 		if m.historySearchResult != "" {
@@ -682,7 +682,7 @@ func (m InputModel) renderSuggestions() string {
 	// Add scroll indicator if needed
 	if len(m.suggestions) > maxShow {
 		indicator := lipgloss.NewStyle().Foreground(ColorDim).Render(
-			fmt.Sprintf(" ↑↓ %d commands", len(m.suggestions)),
+			fmt.Sprintf("↑↓ %d", len(m.suggestions)),
 		)
 		lines = append(lines, indicator)
 	}
@@ -850,9 +850,9 @@ func (m *InputModel) SetPlaceholder(placeholder string) {
 // updatePlaceholder updates the placeholder text based on context.
 func (m *InputModel) updatePlaceholder() {
 	if m.activeTask != "" {
-		m.textarea.Placeholder = "Continue: " + m.activeTask + " | /help for commands"
+		m.textarea.Placeholder = "Continue: " + m.activeTask
 	} else {
-		m.textarea.Placeholder = "Type a message or /command... (Tab to complete)"
+		m.textarea.Placeholder = "Message or /command (Tab: complete)"
 	}
 }
 

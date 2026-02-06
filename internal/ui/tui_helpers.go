@@ -34,16 +34,13 @@ func ClearBadgeCmd() tea.Cmd {
 	}
 }
 
-// Welcome displays a minimalist welcome message.
+// Welcome displays a minimalist welcome message using lipgloss borders.
 func (m *Model) Welcome() {
-	borderStyle := lipgloss.NewStyle().Foreground(ColorDim)
 	titleStyle := lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
-	subtitleStyle := lipgloss.NewStyle().Foreground(ColorMuted)
-	infoStyle := lipgloss.NewStyle().Foreground(ColorText)
-	accentStyle := lipgloss.NewStyle().Foreground(ColorAccent)
-	readyStyle := lipgloss.NewStyle().Foreground(ColorMuted)
+	dimStyle := lipgloss.NewStyle().Foreground(ColorDim)
+	infoStyle := lipgloss.NewStyle().Foreground(ColorMuted)
 
-	// Build info line: path • model • context%
+	// Build info line: ~/project • model • 0%
 	dir := m.workDir
 	if dir == "" {
 		dir = "."
@@ -60,61 +57,21 @@ func (m *Model) Welcome() {
 		contextStr = fmt.Sprintf("%.0f%%", m.tokenUsage.PercentUsed*100)
 	}
 
-	infoLine := infoStyle.Render(dir) + subtitleStyle.Render(" • ") +
-		accentStyle.Render(modelName) + subtitleStyle.Render(" • ") +
-		infoStyle.Render(contextStr)
+	// 3 lines of content
+	line1 := titleStyle.Render("GOKIN")
+	line2 := infoStyle.Render(dir+" · "+modelName+" · "+contextStr)
+	line3 := dimStyle.Render("Ctrl+P commands · Shift+Tab plan mode")
 
-	// Calculate box width based on content
-	boxWidth := 49
-	infoLineLen := len(dir) + 3 + len(modelName) + 3 + len(contextStr)
-	if infoLineLen+6 > boxWidth {
-		boxWidth = infoLineLen + 6
-	}
+	content := line1 + "\n" + line2 + "\n" + line3
 
-	// Render compact card
-	m.output.AppendLine(borderStyle.Render("╭" + strings.Repeat("─", boxWidth) + "╮"))
-	m.output.AppendLine(borderStyle.Render("│") + strings.Repeat(" ", boxWidth) + borderStyle.Render("│"))
+	// Wrap in lipgloss rounded border
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(ColorDim).
+		Padding(1, 2).
+		Align(lipgloss.Center)
 
-	// Title
-	titleText := "GOKIN"
-	titlePad := (boxWidth - len(titleText)) / 2
-	m.output.AppendLine(borderStyle.Render("│") +
-		strings.Repeat(" ", titlePad) + titleStyle.Render(titleText) +
-		strings.Repeat(" ", boxWidth-titlePad-len(titleText)) + borderStyle.Render("│"))
-
-	// Subtitle
-	subText := "AI-Powered Code Assistant"
-	subPad := (boxWidth - len(subText)) / 2
-	m.output.AppendLine(borderStyle.Render("│") +
-		strings.Repeat(" ", subPad) + subtitleStyle.Render(subText) +
-		strings.Repeat(" ", boxWidth-subPad-len(subText)) + borderStyle.Render("│"))
-
-	m.output.AppendLine(borderStyle.Render("│") + strings.Repeat(" ", boxWidth) + borderStyle.Render("│"))
-
-	// Info line
-	infoPad := (boxWidth - infoLineLen) / 2
-	m.output.AppendLine(borderStyle.Render("│") +
-		strings.Repeat(" ", infoPad) + infoLine +
-		strings.Repeat(" ", boxWidth-infoPad-infoLineLen) + borderStyle.Render("│"))
-
-	m.output.AppendLine(borderStyle.Render("│") + strings.Repeat(" ", boxWidth) + borderStyle.Render("│"))
-
-	// Ready message
-	readyText := "Ready. Press Ctrl+P for commands."
-	readyPad := (boxWidth - len(readyText)) / 2
-	m.output.AppendLine(borderStyle.Render("│") +
-		strings.Repeat(" ", readyPad) + readyStyle.Render(readyText) +
-		strings.Repeat(" ", boxWidth-readyPad-len(readyText)) + borderStyle.Render("│"))
-
-	// Planning mode hint
-	planHint := "Shift+Tab toggles planning mode."
-	planPad := (boxWidth - len(planHint)) / 2
-	m.output.AppendLine(borderStyle.Render("│") +
-		strings.Repeat(" ", planPad) + readyStyle.Render(planHint) +
-		strings.Repeat(" ", boxWidth-planPad-len(planHint)) + borderStyle.Render("│"))
-
-	m.output.AppendLine(borderStyle.Render("│") + strings.Repeat(" ", boxWidth) + borderStyle.Render("│"))
-	m.output.AppendLine(borderStyle.Render("╰" + strings.Repeat("─", boxWidth) + "╯"))
+	m.output.AppendLine(boxStyle.Render(content))
 	m.output.AppendLine("")
 }
 
@@ -182,7 +139,7 @@ func (m Model) renderScratchpad() string {
 		Foreground(ColorText)
 
 	var builder strings.Builder
-	builder.WriteString(titleStyle.Render(" 🧠 Scratchpad"))
+	builder.WriteString(titleStyle.Render(" Scratchpad"))
 	builder.WriteString("\n")
 	builder.WriteString(contentStyle.Render(m.scratchpad))
 
@@ -319,73 +276,49 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%.1fm", d.Minutes())
 }
 
-// renderResponseMetadata renders the response metadata footer.
+// renderResponseMetadata renders the response metadata as a compact dim footer.
+// Format: 1.2k in · 3.4k out · 4.1s
 func (m Model) renderResponseMetadata(meta ResponseMetadataMsg) string {
 	dimStyle := lipgloss.NewStyle().Foreground(ColorDim)
-	accentStyle := lipgloss.NewStyle().Foreground(ColorAccent)
-	mutedStyle := lipgloss.NewStyle().Foreground(ColorMuted)
 
 	var parts []string
 
-	// Model name (shortened)
-	if meta.Model != "" {
-		modelName := shortenModelName(meta.Model)
-		parts = append(parts, accentStyle.Render(modelName))
+	// Input tokens
+	if meta.InputTokens > 0 {
+		var s string
+		if meta.InputTokens >= 1000 {
+			s = fmt.Sprintf("%.1fk in", float64(meta.InputTokens)/1000)
+		} else {
+			s = fmt.Sprintf("%d in", meta.InputTokens)
+		}
+		parts = append(parts, s)
 	}
 
-	// Token count
-	totalTokens := meta.InputTokens + meta.OutputTokens
-	if totalTokens > 0 {
-		var tokenStr string
-		if totalTokens >= 1000 {
-			tokenStr = fmt.Sprintf("%.1fk tokens", float64(totalTokens)/1000)
+	// Output tokens
+	if meta.OutputTokens > 0 {
+		var s string
+		if meta.OutputTokens >= 1000 {
+			s = fmt.Sprintf("%.1fk out", float64(meta.OutputTokens)/1000)
 		} else {
-			tokenStr = fmt.Sprintf("%d tokens", totalTokens)
+			s = fmt.Sprintf("%d out", meta.OutputTokens)
 		}
-		parts = append(parts, mutedStyle.Render(tokenStr))
+		parts = append(parts, s)
 	}
 
 	// Duration
 	if meta.Duration > 0 {
-		var durationStr string
 		if meta.Duration < time.Second {
-			durationStr = fmt.Sprintf("%dms", meta.Duration.Milliseconds())
+			parts = append(parts, fmt.Sprintf("%dms", meta.Duration.Milliseconds()))
 		} else {
-			durationStr = fmt.Sprintf("%.1fs", meta.Duration.Seconds())
+			parts = append(parts, fmt.Sprintf("%.1fs", meta.Duration.Seconds()))
 		}
-		parts = append(parts, mutedStyle.Render(durationStr))
-	}
-
-	// Tools used count
-	if len(meta.ToolsUsed) > 0 {
-		toolStr := fmt.Sprintf("%d tools", len(meta.ToolsUsed))
-		parts = append(parts, mutedStyle.Render(toolStr))
 	}
 
 	if len(parts) == 0 {
 		return ""
 	}
 
-	// Build the footer line with separators
-	content := strings.Join(parts, dimStyle.Render(" | "))
-
-	// Create centered divider line
-	dividerChar := ""
-	contentWidth := lipgloss.Width(content)
-	availableWidth := m.width - 4
-	if availableWidth < contentWidth+4 {
-		availableWidth = contentWidth + 4
-	}
-
-	sideWidth := (availableWidth - contentWidth - 2) / 2
-	if sideWidth < 3 {
-		sideWidth = 3
-	}
-
-	leftDivider := dimStyle.Render(strings.Repeat(dividerChar, sideWidth))
-	rightDivider := dimStyle.Render(strings.Repeat(dividerChar, sideWidth))
-
-	return leftDivider + " " + content + " " + rightDivider
+	return dimStyle.Render(strings.Join(parts, " · "))
 }
 
 // AppendOutput appends text to the output.

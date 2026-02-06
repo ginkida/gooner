@@ -80,12 +80,12 @@ func (m *ToastManager) Show(toastType ToastType, title, message string, duration
 
 // ShowSuccess displays a success toast.
 func (m *ToastManager) ShowSuccess(message string) {
-	m.Show(ToastSuccess, "Success", message, 2*time.Second)
+	m.Show(ToastSuccess, "", message, 2*time.Second)
 }
 
 // ShowError displays an error toast.
 func (m *ToastManager) ShowError(message string) {
-	m.Show(ToastError, "Error", message, 4*time.Second)
+	m.Show(ToastError, "", message, 6*time.Second)
 }
 
 // ShowErrorWithHint displays an error toast with optional actionable hint.
@@ -100,12 +100,12 @@ func (m *ToastManager) ShowErrorWithHint(message string) {
 
 // ShowInfo displays an info toast.
 func (m *ToastManager) ShowInfo(message string) {
-	m.Show(ToastInfo, "Info", message, 2*time.Second)
+	m.Show(ToastInfo, "", message, 2*time.Second)
 }
 
 // ShowWarning displays a warning toast.
 func (m *ToastManager) ShowWarning(message string) {
-	m.Show(ToastWarning, "Warning", message, 3*time.Second)
+	m.Show(ToastWarning, "", message, 4*time.Second)
 }
 
 // Dismiss removes a toast by ID.
@@ -162,7 +162,7 @@ func (m *ToastManager) View(width int) string {
 }
 
 // renderToast renders a single toast as compact single line.
-// Format: ✓ Message (no borders, minimal space)
+// Format: ✓ Message — fades to dim in last 500ms.
 func (m *ToastManager) renderToast(toast Toast, width int) string {
 	var icon string
 	var iconColor lipgloss.Color
@@ -178,15 +178,19 @@ func (m *ToastManager) renderToast(toast Toast, width int) string {
 		icon, iconColor = "ℹ", ColorInfo
 	}
 
-	// Fade effect when nearing expiration
+	// Fade entire toast when nearing expiration
 	elapsed := time.Since(toast.CreatedAt)
 	remaining := toast.Duration - elapsed
-	if remaining < 500*time.Millisecond {
+	fading := remaining < 500*time.Millisecond
+
+	msgColor := ColorMuted
+	if fading {
 		iconColor = ColorDim
+		msgColor = ColorDim
 	}
 
-	iconStyle := lipgloss.NewStyle().Foreground(iconColor).Bold(true)
-	msgStyle := lipgloss.NewStyle().Foreground(ColorMuted)
+	iconStyle := lipgloss.NewStyle().Foreground(iconColor)
+	msgStyle := lipgloss.NewStyle().Foreground(msgColor)
 
 	// Truncate message to fit width
 	msg := toast.Message

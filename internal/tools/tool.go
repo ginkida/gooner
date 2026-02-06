@@ -2,8 +2,11 @@ package tools
 
 import (
 	"context"
+	"fmt"
 
 	"google.golang.org/genai"
+
+	"gokin/internal/config"
 )
 
 // Tool defines the interface for all tools.
@@ -82,13 +85,19 @@ func NewErrorResult(errMsg string) ToolResult {
 }
 
 // ToMap converts the result to a map for Gemini function response.
+// Content is truncated to DefaultToolResultMaxChars to prevent API payload overflow.
 func (r ToolResult) ToMap() map[string]any {
 	result := make(map[string]any)
 
 	if r.Success {
 		result["success"] = true
 		if r.Content != "" {
-			result["content"] = r.Content
+			content := r.Content
+			maxChars := config.DefaultToolResultMaxChars
+			if len(content) > maxChars {
+				content = content[:maxChars] + fmt.Sprintf("\n... (output truncated: showing %d of %d characters)", maxChars, len(r.Content))
+			}
+			result["content"] = content
 		}
 		if r.Data != nil {
 			result["data"] = r.Data

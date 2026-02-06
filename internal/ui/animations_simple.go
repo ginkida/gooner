@@ -106,7 +106,7 @@ func SuccessAnimation(message string) string {
 	return lipgloss.NewStyle().
 		Foreground(ColorSuccess).
 		Bold(true).
-		Render("✨ " + message)
+		Render("✓ " + message)
 }
 
 // ErrorAnimation returns an error message

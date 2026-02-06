@@ -11,13 +11,14 @@ import (
 
 // NotificationManager handles user notifications for tool execution
 type NotificationManager struct {
-	mu          sync.RWMutex
-	history     []Notification
-	maxHistory  int
-	onNotify    func(Notification)
-	quietMode   bool
-	verboseMode bool
-	silentTools map[string]bool // Tools that shouldn't notify
+	mu                  sync.RWMutex
+	history             []Notification
+	maxHistory          int
+	onNotify            func(Notification)
+	quietMode           bool
+	verboseMode         bool
+	nativeNotifications bool            // Send native macOS notifications (disabled by default)
+	silentTools         map[string]bool // Tools that shouldn't notify
 }
 
 // Notification represents a user-facing notification
@@ -73,6 +74,14 @@ func (nm *NotificationManager) EnableVerboseMode(enabled bool) {
 	nm.verboseMode = enabled
 }
 
+// EnableNativeNotifications enables/disables native macOS Notification Center alerts.
+// Disabled by default to avoid intrusive notifications during work.
+func (nm *NotificationManager) EnableNativeNotifications(enabled bool) {
+	nm.mu.Lock()
+	defer nm.mu.Unlock()
+	nm.nativeNotifications = enabled
+}
+
 // SetSilentTool configures a tool to not send notifications
 func (nm *NotificationManager) SetSilentTool(toolName string, silent bool) {
 	nm.mu.Lock()
@@ -125,8 +134,8 @@ func (nm *NotificationManager) Notify(typ NotificationType, toolName, message, d
 		go nm.onNotify(notif)
 	}
 
-	// Native macOS notifications
-	if runtime.GOOS == "darwin" && !nm.quietMode {
+	// Native macOS notifications (opt-in)
+	if runtime.GOOS == "darwin" && nm.nativeNotifications {
 		go nm.sendNativeNotification(notif)
 	}
 }

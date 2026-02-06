@@ -482,7 +482,7 @@ func (p *CommandPalette) View(width, height int) string {
 	// Search input
 	var inputContent string
 	if p.query == "" {
-		inputContent = placeholderStyle.Render("Type to search...")
+		inputContent = placeholderStyle.Render("Filter...")
 	} else {
 		inputContent = queryStyle.Render(p.query) + placeholderStyle.Render("_")
 	}
