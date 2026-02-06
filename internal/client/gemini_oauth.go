@@ -37,7 +37,8 @@ type GeminiOAuthClient struct {
 	retryDelay   time.Duration
 	genConfig    *genai.GenerateContentConfig
 
-	statusCallback StatusCallback
+	statusCallback    StatusCallback
+	systemInstruction string
 
 	mu sync.RWMutex
 }
@@ -155,6 +156,13 @@ func (c *GeminiOAuthClient) loadProjectID(ctx context.Context) error {
 	return nil
 }
 
+// SetSystemInstruction sets the system-level instruction for the model.
+func (c *GeminiOAuthClient) SetSystemInstruction(instruction string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.systemInstruction = instruction
+}
+
 // SetTools sets the tools available for function calling
 func (c *GeminiOAuthClient) SetTools(tools []*genai.Tool) {
 	c.tools = tools
@@ -247,20 +255,21 @@ func (c *GeminiOAuthClient) WithModel(modelName string) Client {
 	defer c.mu.RUnlock()
 
 	return &GeminiOAuthClient{
-		httpClient:     c.httpClient,
-		accessToken:    c.accessToken,
-		refreshToken:   c.refreshToken,
-		expiresAt:      c.expiresAt,
-		email:          c.email,
-		projectID:      c.projectID,
-		config:         c.config,
-		model:          modelName,
-		tools:          c.tools,
-		rateLimiter:    c.rateLimiter,
-		maxRetries:     c.maxRetries,
-		retryDelay:     c.retryDelay,
-		genConfig:      c.genConfig,
-		statusCallback: c.statusCallback,
+		httpClient:        c.httpClient,
+		accessToken:       c.accessToken,
+		refreshToken:      c.refreshToken,
+		expiresAt:         c.expiresAt,
+		email:             c.email,
+		projectID:         c.projectID,
+		config:            c.config,
+		model:             modelName,
+		tools:             c.tools,
+		rateLimiter:       c.rateLimiter,
+		maxRetries:        c.maxRetries,
+		retryDelay:        c.retryDelay,
+		genConfig:         c.genConfig,
+		statusCallback:    c.statusCallback,
+		systemInstruction: c.systemInstruction,
 	}
 }
 
@@ -480,6 +489,18 @@ func (c *GeminiOAuthClient) buildRequest(contents []*genai.Content) map[string]i
 	// Inner request payload
 	requestPayload := map[string]interface{}{
 		"contents": apiContents,
+	}
+
+	// Add system instruction if set
+	c.mu.RLock()
+	sysInstruction := c.systemInstruction
+	c.mu.RUnlock()
+	if sysInstruction != "" {
+		requestPayload["systemInstruction"] = map[string]interface{}{
+			"parts": []map[string]interface{}{
+				{"text": sysInstruction},
+			},
+		}
 	}
 
 	// Add generation config

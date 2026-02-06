@@ -18,14 +18,15 @@ import (
 
 // GeminiClient wraps the Google Gemini API.
 type GeminiClient struct {
-	client         *genai.Client
-	model          string
-	config         *genai.GenerateContentConfig
-	tools          []*genai.Tool
-	rateLimiter    *ratelimit.Limiter
-	maxRetries     int            // Maximum number of retry attempts (default: 3)
-	retryDelay     time.Duration  // Initial delay between retries (default: 1s)
-	statusCallback StatusCallback // Optional callback for status updates
+	client            *genai.Client
+	model             string
+	config            *genai.GenerateContentConfig
+	tools             []*genai.Tool
+	rateLimiter       *ratelimit.Limiter
+	maxRetries        int            // Maximum number of retry attempts (default: 3)
+	retryDelay        time.Duration  // Initial delay between retries (default: 1s)
+	statusCallback    StatusCallback // Optional callback for status updates
+	systemInstruction string         // System-level instruction passed via API parameter
 }
 
 // NewGeminiClient creates a new Gemini API client (returns Client interface).
@@ -79,6 +80,11 @@ func NewGeminiClient(ctx context.Context, cfg *config.Config) (Client, error) {
 		maxRetries: maxRetries,
 		retryDelay: retryDelay,
 	}, nil
+}
+
+// SetSystemInstruction sets the system-level instruction for the model.
+func (c *GeminiClient) SetSystemInstruction(instruction string) {
+	c.systemInstruction = instruction
 }
 
 // SetTools sets the tools available for function calling.
@@ -309,6 +315,9 @@ func (c *GeminiClient) doGenerateContentStream(ctx context.Context, contents []*
 	}
 
 	config := *c.config
+	if c.systemInstruction != "" {
+		config.SystemInstruction = genai.NewContentFromText(c.systemInstruction, genai.RoleUser)
+	}
 	if len(c.tools) > 0 {
 		config.Tools = c.tools
 	}
@@ -565,14 +574,15 @@ func (c *GeminiClient) SetModel(modelName string) {
 // WithModel returns a new client configured for the specified model.
 func (c *GeminiClient) WithModel(modelName string) Client {
 	return &GeminiClient{
-		client:         c.client,
-		model:          modelName,
-		config:         c.config,
-		tools:          c.tools,
-		rateLimiter:    c.rateLimiter,
-		maxRetries:     c.maxRetries,
-		retryDelay:     c.retryDelay,
-		statusCallback: c.statusCallback,
+		client:            c.client,
+		model:             modelName,
+		config:            c.config,
+		tools:             c.tools,
+		rateLimiter:       c.rateLimiter,
+		maxRetries:        c.maxRetries,
+		retryDelay:        c.retryDelay,
+		statusCallback:    c.statusCallback,
+		systemInstruction: c.systemInstruction,
 	}
 }
 

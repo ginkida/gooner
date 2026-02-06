@@ -9,16 +9,17 @@ import (
 
 // SessionState represents the serializable state of a session.
 type SessionState struct {
-	ID          string              `json:"id"`
-	StartTime   time.Time           `json:"start_time"`
-	LastActive  time.Time           `json:"last_active"`
-	WorkDir     string              `json:"work_dir,omitempty"`
-	History     []SerializedContent `json:"history"`
-	TokenCounts []int               `json:"token_counts,omitempty"`
-	TotalTokens int                 `json:"total_tokens"`
-	Version     int64               `json:"version"`
-	Summary     string              `json:"summary,omitempty"`
-	Scratchpad  string              `json:"scratchpad,omitempty"`
+	ID                string              `json:"id"`
+	StartTime         time.Time           `json:"start_time"`
+	LastActive        time.Time           `json:"last_active"`
+	WorkDir           string              `json:"work_dir,omitempty"`
+	History           []SerializedContent `json:"history"`
+	TokenCounts       []int               `json:"token_counts,omitempty"`
+	TotalTokens       int                 `json:"total_tokens"`
+	Version           int64               `json:"version"`
+	Summary           string              `json:"summary,omitempty"`
+	Scratchpad        string              `json:"scratchpad,omitempty"`
+	SystemInstruction string              `json:"system_instruction,omitempty"`
 }
 
 // SerializedContent represents a serializable conversation content.

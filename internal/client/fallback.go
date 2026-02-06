@@ -147,6 +147,15 @@ func (fc *FallbackClient) SendFunctionResponse(ctx context.Context, history []*g
 	return nil, fmt.Errorf("all fallback clients exhausted")
 }
 
+// SetSystemInstruction sets the system-level instruction on ALL clients in the fallback chain.
+func (fc *FallbackClient) SetSystemInstruction(instruction string) {
+	fc.mu.RLock()
+	defer fc.mu.RUnlock()
+	for _, c := range fc.clients {
+		c.SetSystemInstruction(instruction)
+	}
+}
+
 // SetTools sets tools on ALL clients in the fallback chain.
 func (fc *FallbackClient) SetTools(tools []*genai.Tool) {
 	fc.mu.RLock()

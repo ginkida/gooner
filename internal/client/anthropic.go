@@ -59,12 +59,13 @@ type AnthropicConfig struct {
 
 // AnthropicClient implements Client interface for Anthropic-compatible APIs (including GLM-4.7).
 type AnthropicClient struct {
-	config         AnthropicConfig
-	httpClient     *http.Client
-	tools          []*genai.Tool
-	rateLimiter    RateLimiter
-	statusCallback StatusCallback
-	mu             sync.RWMutex
+	config            AnthropicConfig
+	httpClient        *http.Client
+	tools             []*genai.Tool
+	rateLimiter       RateLimiter
+	statusCallback    StatusCallback
+	systemInstruction string
+	mu                sync.RWMutex
 }
 
 // NewAnthropicClient creates a new Anthropic-compatible client.
@@ -143,8 +144,21 @@ func (c *AnthropicClient) SendMessageWithHistory(ctx context.Context, history []
 		"history_roles", strings.Join(historyRoles, ","),
 		"message_len", len(message))
 
-	// Convert Gemini format to Anthropic format, extracting system prompt
-	messages, systemPrompt := c.convertHistoryToMessagesWithSystem(history, message)
+	// Use explicit system instruction if set, otherwise fall back to heuristic extraction
+	c.mu.RLock()
+	sysInstruction := c.systemInstruction
+	c.mu.RUnlock()
+
+	var messages []map[string]interface{}
+	var systemPrompt string
+	if sysInstruction != "" {
+		// Use explicit system instruction — skip heuristic extraction from history
+		systemPrompt = sysInstruction
+		messages = c.convertHistoryToMessages(history, message)
+	} else {
+		// Legacy fallback: extract system prompt from first user message
+		messages, systemPrompt = c.convertHistoryToMessagesWithSystem(history, message)
+	}
 
 	// Build request
 	requestBody := map[string]interface{}{
@@ -184,8 +198,19 @@ func (c *AnthropicClient) SendMessageWithHistory(ctx context.Context, history []
 
 // SendFunctionResponse sends function call results back to the model.
 func (c *AnthropicClient) SendFunctionResponse(ctx context.Context, history []*genai.Content, results []*genai.FunctionResponse) (*StreamingResponse, error) {
-	// Append function results to history and continue, extracting system prompt
-	messages, systemPrompt := c.convertHistoryWithResultsAndSystem(history, results)
+	// Use explicit system instruction if set, otherwise fall back to heuristic extraction
+	c.mu.RLock()
+	sysInstruction := c.systemInstruction
+	c.mu.RUnlock()
+
+	var messages []map[string]interface{}
+	var systemPrompt string
+	if sysInstruction != "" {
+		systemPrompt = sysInstruction
+		messages = c.convertHistoryWithResults(history, results)
+	} else {
+		messages, systemPrompt = c.convertHistoryWithResultsAndSystem(history, results)
+	}
 
 	requestBody := map[string]interface{}{
 		"model":      c.config.Model,
@@ -204,6 +229,13 @@ func (c *AnthropicClient) SendFunctionResponse(ctx context.Context, history []*g
 	}
 
 	return c.streamRequest(ctx, requestBody)
+}
+
+// SetSystemInstruction sets the system-level instruction for the model.
+func (c *AnthropicClient) SetSystemInstruction(instruction string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.systemInstruction = instruction
 }
 
 // SetTools sets the tools available for function calling.

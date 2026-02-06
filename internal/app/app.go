@@ -283,18 +283,23 @@ func (a *App) Run() error {
 	// Build model-specific enhancement
 	modelEnhancement := a.buildModelEnhancement()
 
-	// Only add system prompt if we didn't restore a session
+	// Set system instruction via native API parameter (not as user message)
 	if !sessionRestored {
-		// Generate dynamic system prompt
 		systemPrompt := a.promptBuilder.Build()
 		systemPrompt += modelEnhancement
-
-		a.session.AddUserMessage(systemPrompt)
-		a.session.AddModelMessage("I understand. I'm ready to help you with your code. What would you like to do?")
-	} else if modelEnhancement != "" {
-		// For restored sessions, inject a reminder about response quality
-		a.session.AddUserMessage(modelEnhancement + "\n\n[Session restored. Remember to always provide detailed responses after using tools.]")
-		a.session.AddModelMessage("Understood. I'll continue to provide detailed, helpful responses. What would you like me to help with?")
+		a.client.SetSystemInstruction(systemPrompt)
+		a.session.SystemInstruction = systemPrompt
+	} else {
+		// Restored session: use saved system instruction or rebuild
+		if a.session.SystemInstruction != "" {
+			a.client.SetSystemInstruction(a.session.SystemInstruction)
+		} else {
+			// Legacy session without SystemInstruction — rebuild
+			systemPrompt := a.promptBuilder.Build()
+			systemPrompt += modelEnhancement
+			a.client.SetSystemInstruction(systemPrompt)
+			a.session.SystemInstruction = systemPrompt
+		}
 	}
 
 	// Start session manager for periodic saves
@@ -613,10 +618,10 @@ func (a *App) GetWorkDir() string {
 func (a *App) ClearConversation() {
 	a.session.Clear()
 
-	// Re-initialize with system prompt
+	// Re-set system instruction via API parameter
 	systemPrompt := a.promptBuilder.Build()
-	a.session.AddUserMessage(systemPrompt)
-	a.session.AddModelMessage("I understand. I'm ready to help you with your code. What would you like to do?")
+	a.client.SetSystemInstruction(systemPrompt)
+	a.session.SystemInstruction = systemPrompt
 }
 
 // CompactContextWithPlan clears the conversation and injects the plan summary.
@@ -628,15 +633,14 @@ func (a *App) CompactContextWithPlan(planSummary string) {
 	// Clear the session
 	a.session.Clear()
 
-	// Re-initialize with system prompt
+	// Re-set system instruction via API parameter
 	systemPrompt := a.promptBuilder.Build()
-	a.session.AddUserMessage(systemPrompt)
+	a.client.SetSystemInstruction(systemPrompt)
+	a.session.SystemInstruction = systemPrompt
 
-	// Inject the plan summary as context
+	// Inject the plan summary as a user message for execution context
 	if planSummary != "" {
-		a.session.AddModelMessage(fmt.Sprintf("I've analyzed the task and created a plan. Here's the summary:\n\n%s\n\nI'll now execute this plan step by step.", planSummary))
-	} else {
-		a.session.AddModelMessage("I understand. I'm ready to execute the plan.")
+		a.session.AddUserMessage("Execute the approved plan. Summary:\n\n" + planSummary)
 	}
 
 	// Log the context compaction

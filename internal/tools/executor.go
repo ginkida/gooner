@@ -861,6 +861,13 @@ func (e *Executor) doExecuteTool(ctx context.Context, call *genai.FunctionCall) 
 		result = NewErrorResult(err.Error())
 	}
 
+	// Enrich empty successful results with diagnostic hints
+	if result.Success && result.Content == "" {
+		if hint := getEmptyResultHint(call.Name); hint != "" {
+			result.Content = hint
+		}
+	}
+
 	// Enrich result with execution metadata
 	if result.ExecutionSummary == nil && summary != nil {
 		result.ExecutionSummary = summary
@@ -1099,6 +1106,21 @@ func isWriteOperation(toolName string) bool {
 		"git_commit":  true,
 	}
 	return writeTools[toolName]
+}
+
+// getEmptyResultHint returns a diagnostic hint when a tool returns empty results.
+// This helps the model understand what happened and suggest alternatives.
+func getEmptyResultHint(toolName string) string {
+	hints := map[string]string{
+		"read": "The file is empty or could not be read. Check if the file exists and has content.",
+		"grep": "No matches found. Try a simpler pattern, expand search scope, or check pattern syntax.",
+		"glob": "No files match this pattern. Try a broader pattern like '**/*' or check the directory exists.",
+		"bash": "Command produced no output. This may be expected (e.g., mkdir, cp succeed silently). Run with verbose flags (-v) for more details.",
+	}
+	if hint, ok := hints[toolName]; ok {
+		return hint
+	}
+	return ""
 }
 
 // getToolFilePath extracts the primary file path from tool arguments.

@@ -29,18 +29,19 @@ type ChangeHandler func(ChangeEvent)
 
 // Session represents a chat session.
 type Session struct {
-	ID          string
-	StartTime   time.Time
-	WorkDir     string
-	History     []*genai.Content
-	Branches    map[string]*Session // named branches (forks)
-	Checkpoints map[string]int      // named checkpoints (name -> history index)
-	tokenCounts []int               // tokens per message
-	totalTokens int                 // cached total
-	version     int64               // version for optimistic concurrency control
-	onChange    ChangeHandler
-	scratchpad  string
-	mu          sync.RWMutex
+	ID                string
+	StartTime         time.Time
+	WorkDir           string
+	History           []*genai.Content
+	Branches          map[string]*Session // named branches (forks)
+	Checkpoints       map[string]int      // named checkpoints (name -> history index)
+	SystemInstruction string              // System prompt, passed via API parameter (not in history)
+	tokenCounts       []int               // tokens per message
+	totalTokens       int                 // cached total
+	version           int64               // version for optimistic concurrency control
+	onChange          ChangeHandler
+	scratchpad        string
+	mu                sync.RWMutex
 }
 
 // NewSession creates a new chat session.
@@ -385,15 +386,16 @@ func (s *Session) GetState() *SessionState {
 	}
 
 	state := &SessionState{
-		ID:          s.ID,
-		StartTime:   s.StartTime,
-		LastActive:  time.Now(),
-		WorkDir:     s.WorkDir,
-		History:     history,
-		TokenCounts: make([]int, len(s.tokenCounts)),
-		TotalTokens: s.totalTokens,
-		Version:     s.version,
-		Scratchpad:  s.scratchpad,
+		ID:                s.ID,
+		StartTime:         s.StartTime,
+		LastActive:        time.Now(),
+		WorkDir:           s.WorkDir,
+		History:           history,
+		TokenCounts:       make([]int, len(s.tokenCounts)),
+		TotalTokens:       s.totalTokens,
+		Version:           s.version,
+		Scratchpad:        s.scratchpad,
+		SystemInstruction: s.SystemInstruction,
 	}
 	copy(state.TokenCounts, s.tokenCounts)
 
@@ -426,6 +428,7 @@ func (s *Session) RestoreFromState(state *SessionState) error {
 	s.totalTokens = state.TotalTokens
 	s.version = state.Version
 	s.scratchpad = state.Scratchpad
+	s.SystemInstruction = state.SystemInstruction
 
 	return nil
 }

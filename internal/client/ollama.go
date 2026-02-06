@@ -32,12 +32,13 @@ type OllamaConfig struct {
 
 // OllamaClient implements Client interface for Ollama API.
 type OllamaClient struct {
-	client         *api.Client
-	config         OllamaConfig
-	tools          []*genai.Tool
-	rateLimiter    RateLimiter
-	statusCallback StatusCallback
-	mu             sync.RWMutex
+	client            *api.Client
+	config            OllamaConfig
+	tools             []*genai.Tool
+	rateLimiter       RateLimiter
+	statusCallback    StatusCallback
+	systemInstruction string
+	mu                sync.RWMutex
 }
 
 // authTransport adds Authorization header to HTTP requests.
@@ -325,6 +326,13 @@ func (c *OllamaClient) doStreamChat(ctx context.Context, req *api.ChatRequest) (
 	}, nil
 }
 
+// SetSystemInstruction sets the system-level instruction for the model.
+func (c *OllamaClient) SetSystemInstruction(instruction string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.systemInstruction = instruction
+}
+
 // SetTools sets the tools available for function calling.
 func (c *OllamaClient) SetTools(tools []*genai.Tool) {
 	c.mu.Lock()
@@ -495,7 +503,15 @@ func (c *OllamaClient) IsModelAvailable(ctx context.Context, modelName string) (
 
 // convertHistoryToMessages converts Gemini history to Ollama messages format.
 func (c *OllamaClient) convertHistoryToMessages(history []*genai.Content, newMessage string) []api.Message {
-	messages := make([]api.Message, 0, len(history)+1)
+	messages := make([]api.Message, 0, len(history)+2)
+
+	// Prepend system instruction if set
+	c.mu.RLock()
+	sysInstruction := c.systemInstruction
+	c.mu.RUnlock()
+	if sysInstruction != "" {
+		messages = append(messages, api.Message{Role: "system", Content: sysInstruction})
+	}
 
 	for _, content := range history {
 		msg := c.convertContentToMessage(content)

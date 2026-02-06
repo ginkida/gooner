@@ -138,6 +138,11 @@ type Client interface {
 	// GetRawClient returns the underlying client for direct API access.
 	GetRawClient() interface{}
 
+	// SetSystemInstruction sets the system-level instruction for the model.
+	// This is passed via the API's native system instruction parameter
+	// rather than being injected as a user message in the conversation history.
+	SetSystemInstruction(instruction string)
+
 	// Close closes the client connection.
 	Close() error
 }
