@@ -58,14 +58,14 @@ and helps with coding using natural language.
   • %sBe specific%s           - The more detailed the request, the better the result
   • %sUse context%s           - "In main.go find the main function"
   • %sAsk for explanations%s  - "Explain how this code works"
-  • %sReview changes%s        - Use /undo to roll back
+  • %sReview changes%s        - Use git diff to review changes
 
 %s──── Key Commands ───%s
 
   %s/help%s       - Help for all commands
-  %s/tour%s       - Interactive tutorial
-  %s/examples%s   - More example prompts
+  %s/doctor%s     - Check setup and diagnostics
   %s/model%s      - Switch AI model
+  %s/config%s     - Show or edit configuration
   %s/clear%s      - Clear chat history
 
 %s──── Ready to Start? ───%s

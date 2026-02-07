@@ -182,24 +182,6 @@ func (v *DefaultSafetyValidator) initMetadata() {
 		AllowRetry:           false,
 	}
 
-	// Undo tool - caution
-	v.metadata["undo"] = &ToolMetadata{
-		Name:        "undo",
-		SafetyLevel: SafetyLevelCaution,
-		Category:    "file",
-		RiskFactors: []string{"state-reversion"},
-		Impact:      "Reverts recent file changes",
-		Example:     `undo(action="undo", count=1)`,
-		BestPractices: []string{
-			"Use 'undo list' first to see recent changes",
-			"Undo is not a substitute for version control",
-			"Changes cannot be undone after being undone",
-		},
-		MaxExecTime:          5 * time.Second,
-		RequiresConfirmation: true,
-		AllowRetry:           false,
-	}
-
 	// Network tools - caution
 	v.metadata["web_fetch"] = &ToolMetadata{
 		Name:        "web_fetch",
@@ -406,6 +388,16 @@ func (c *PreFlightCheck) validateEditPath(path string, args map[string]any) {
 	if path == "" {
 		c.Errors = append(c.Errors, "file_path is required")
 		c.IsValid = false
+	}
+
+	// Line-based mode — no old_string needed
+	if lineStart, ok := GetInt(args, "line_start"); ok && lineStart > 0 {
+		return
+	}
+
+	// Multi-edit mode
+	if edits, ok := args["edits"].([]any); ok && len(edits) > 0 {
+		return
 	}
 
 	oldString, hasOld := GetString(args, "old_string")

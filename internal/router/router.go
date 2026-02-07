@@ -39,6 +39,10 @@ type Router struct {
 	client      client.Client
 	workDir     string
 
+	// Tool filtering
+	registry  *tools.Registry // Tool registry for per-request filtering
+	isGitRepo bool            // Whether working dir is a git repo
+
 	// Plan awareness
 	planChecker PlanChecker
 
@@ -76,7 +80,7 @@ type RouterConfig struct {
 }
 
 // NewRouter creates a new task router
-func NewRouter(cfg *RouterConfig, executor *tools.Executor, agentRunner AgentRunner, client client.Client, workDir string) *Router {
+func NewRouter(cfg *RouterConfig, executor *tools.Executor, agentRunner AgentRunner, client client.Client, registry *tools.Registry, isGitRepo bool, workDir string) *Router {
 	if cfg == nil {
 		cfg = &RouterConfig{
 			Enabled:            true,
@@ -91,6 +95,8 @@ func NewRouter(cfg *RouterConfig, executor *tools.Executor, agentRunner AgentRun
 		agentRunner:        agentRunner,
 		client:             client,
 		workDir:            workDir,
+		registry:           registry,
+		isGitRepo:          isGitRepo,
 		enabled:            cfg.Enabled,
 		decomposeThreshold: cfg.DecomposeThreshold,
 		parallelThreshold:  cfg.ParallelThreshold,
@@ -162,6 +168,7 @@ func (r *Router) Route(message string) *RoutingDecision {
 			decision.Decomposition = decomposition
 			decision.Reasoning = fmt.Sprintf("Auto-decomposition: %d subtasks (%s)",
 				len(decomposition.Subtasks), decomposition.Reasoning)
+			decision.SuggestedToolSets = r.selectToolSets(analysis)
 
 			logging.Info("task decomposed",
 				"message", message,
@@ -202,12 +209,36 @@ func (r *Router) Route(message string) *RoutingDecision {
 		decision.SuggestedModel = r.selectCostAwareModel(analysis)
 	}
 
+	// Dynamic thinking budget based on complexity
+	decision.ThinkingBudget = r.selectThinkingBudget(analysis)
+
+	// Per-request tool filtering
+	decision.SuggestedToolSets = r.selectToolSets(analysis)
+
 	return decision
 }
 
 // Execute routes the task to the appropriate handler and returns the result
 func (r *Router) Execute(ctx context.Context, history []*genai.Content, message string) ([]*genai.Content, string, error) {
 	decision := r.Route(message)
+
+	// Apply thinking budget for this request
+	r.client.SetThinkingBudget(decision.ThinkingBudget)
+
+	// Apply per-request tool filtering
+	if r.registry != nil && len(decision.SuggestedToolSets) > 0 {
+		r.client.SetTools(r.registry.FilteredGeminiTools(decision.SuggestedToolSets...))
+	}
+
+	// Add tool usage hint based on task type
+	if hint := r.toolHint(decision.Analysis); hint != "" {
+		message = hint + "\n\n" + message
+	}
+
+	// Add thinking hint for complex tasks
+	if decision.Analysis.Score >= 4 || decision.Analysis.Strategy == StrategySubAgent {
+		message = "Before acting, analyze the problem step by step and consider edge cases.\n\n" + message
+	}
 
 	switch decision.Handler {
 	case HandlerDirect:
@@ -566,16 +597,18 @@ func (r *Router) adjustStrategyFromHistory(analysis *TaskComplexity) {
 
 // RoutingDecision represents the routing decision for a task
 type RoutingDecision struct {
-	Analysis        *TaskComplexity
-	Message         string
-	Handler         HandlerType
-	SubAgentType    string
-	Background      bool
-	ShouldRoute     bool
-	Reasoning       string
-	Decomposition   *DecompositionResult // For HandlerCoordinated
-	LearnedExamples []LearnedExample     // Similar past tasks (Phase 2)
-	SuggestedModel  string               // Cost-aware model suggestion (empty = use default)
+	Analysis          *TaskComplexity
+	Message           string
+	Handler           HandlerType
+	SubAgentType      string
+	Background        bool
+	ShouldRoute       bool
+	Reasoning         string
+	Decomposition     *DecompositionResult // For HandlerCoordinated
+	LearnedExamples   []LearnedExample     // Similar past tasks (Phase 2)
+	SuggestedModel    string               // Cost-aware model suggestion (empty = use default)
+	ThinkingBudget    int32                // 0 = disabled, >0 = max thinking tokens
+	SuggestedToolSets []tools.ToolSet      // Tool sets for this request
 }
 
 // LearnedExample contains information about a learned example for few-shot learning.
@@ -602,6 +635,27 @@ func (h HandlerType) String() string {
 	return string(h)
 }
 
+// selectThinkingBudget returns the thinking token budget based on task complexity.
+func (r *Router) selectThinkingBudget(analysis *TaskComplexity) int32 {
+	switch analysis.Strategy {
+	case StrategyDirect:
+		return 0
+	case StrategySingleTool:
+		if analysis.Score <= 2 {
+			return 0
+		}
+		return 1024
+	case StrategyExecutor:
+		if analysis.Score >= 5 {
+			return 4096
+		}
+		return 1024
+	case StrategySubAgent:
+		return 8192
+	}
+	return 0
+}
+
 // selectCostAwareModel returns the fast model for simple tasks, empty for complex ones.
 func (r *Router) selectCostAwareModel(analysis *TaskComplexity) string {
 	// Use fast model for direct responses and simple single-tool calls
@@ -616,6 +670,63 @@ func (r *Router) selectCostAwareModel(analysis *TaskComplexity) string {
 	}
 	// Complex tasks use the default (primary) model
 	return ""
+}
+
+// selectToolSets determines which tool sets to include based on task analysis.
+func (r *Router) selectToolSets(analysis *TaskComplexity) []tools.ToolSet {
+	// Base: core is always included
+	sets := []tools.ToolSet{tools.ToolSetCore}
+
+	// Git — always if in repo
+	if r.isGitRepo {
+		sets = append(sets, tools.ToolSetGit)
+	}
+
+	switch analysis.Strategy {
+	case StrategyDirect:
+		// Questions — only core (+git). No file ops, no web, no planning.
+		return sets
+
+	case StrategySingleTool:
+		// Simple tool calls — add fileops
+		sets = append(sets, tools.ToolSetFileOps)
+		return sets
+
+	case StrategyExecutor:
+		// Standard execution — add fileops + web
+		sets = append(sets, tools.ToolSetFileOps, tools.ToolSetWeb)
+
+		// Add advanced for refactoring/complex code tasks
+		if analysis.Type == TaskTypeRefactoring || analysis.Type == TaskTypeComplex {
+			sets = append(sets, tools.ToolSetAdvanced)
+		}
+		return sets
+
+	case StrategySubAgent:
+		// Sub-agents / complex — full set
+		sets = append(sets, tools.ToolSetFileOps, tools.ToolSetWeb,
+			tools.ToolSetAdvanced, tools.ToolSetPlanning,
+			tools.ToolSetAgent, tools.ToolSetMemory, tools.ToolSetSemantic)
+		return sets
+	}
+
+	// Fallback: core + fileops
+	sets = append(sets, tools.ToolSetFileOps)
+	return sets
+}
+
+// toolHint returns an optional prompt hint based on task type.
+func (r *Router) toolHint(analysis *TaskComplexity) string {
+	switch analysis.Type {
+	case TaskTypeExploration:
+		return "For this task, prefer read, glob, grep, and tree for exploring code. Avoid write/edit unless explicitly asked."
+	case TaskTypeRefactoring:
+		return "For this task, prefer edit over write to make targeted changes. Use diff to verify."
+	case TaskTypeQuestion:
+		return "" // No hint for simple questions
+	default:
+		return ""
+	}
 }
 
 // TrackOperation records an operation outcome for context awareness.

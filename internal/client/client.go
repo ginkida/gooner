@@ -143,6 +143,10 @@ type Client interface {
 	// rather than being injected as a user message in the conversation history.
 	SetSystemInstruction(instruction string)
 
+	// SetThinkingBudget configures the thinking/reasoning budget for the next request.
+	// budget=0 disables thinking. Positive values set max thinking tokens.
+	SetThinkingBudget(budget int32)
+
 	// Close closes the client connection.
 	Close() error
 }

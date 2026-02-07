@@ -425,6 +425,16 @@ func (m *OutputModel) SetMouseEnabled(enabled bool) {
 	m.viewport.MouseWheelEnabled = enabled
 }
 
+// ScrollPercent returns the scroll position as a percentage (0-100).
+func (m OutputModel) ScrollPercent() int {
+	return int(m.viewport.ScrollPercent() * 100)
+}
+
+// IsAtBottom returns whether the viewport is scrolled to the bottom.
+func (m OutputModel) IsAtBottom() bool {
+	return m.viewport.AtBottom()
+}
+
 // SetFrozen freezes or unfreezes the viewport auto-scroll.
 // When frozen, new content won't cause the viewport to jump to the bottom.
 func (m *OutputModel) SetFrozen(frozen bool) {

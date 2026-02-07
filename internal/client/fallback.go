@@ -156,6 +156,15 @@ func (fc *FallbackClient) SetSystemInstruction(instruction string) {
 	}
 }
 
+// SetThinkingBudget sets thinking budget on ALL clients in the fallback chain.
+func (fc *FallbackClient) SetThinkingBudget(budget int32) {
+	fc.mu.RLock()
+	defer fc.mu.RUnlock()
+	for _, c := range fc.clients {
+		c.SetThinkingBudget(budget)
+	}
+}
+
 // SetTools sets tools on ALL clients in the fallback chain.
 func (fc *FallbackClient) SetTools(tools []*genai.Tool) {
 	fc.mu.RLock()

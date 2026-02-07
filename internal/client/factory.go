@@ -222,12 +222,14 @@ func newGLMClient(cfg *config.Config, modelID string) (Client, error) {
 	}
 
 	anthropicConfig := AnthropicConfig{
-		APIKey:        loadedKey.Value,
-		BaseURL:       baseURL,
-		Model:         modelID,
-		MaxTokens:     cfg.Model.MaxOutputTokens,
-		Temperature:   cfg.Model.Temperature,
-		StreamEnabled: true,
+		APIKey:         loadedKey.Value,
+		BaseURL:        baseURL,
+		Model:          modelID,
+		MaxTokens:      cfg.Model.MaxOutputTokens,
+		Temperature:    cfg.Model.Temperature,
+		StreamEnabled:  true,
+		EnableThinking: cfg.Model.EnableThinking,
+		ThinkingBudget: cfg.Model.ThinkingBudget,
 		// Retry configuration from config
 		MaxRetries:  cfg.API.Retry.MaxRetries,
 		RetryDelay:  cfg.API.Retry.RetryDelay,
@@ -262,12 +264,14 @@ func newAnthropicClientForModel(cfg *config.Config, modelInfo ModelInfo) (Client
 	}
 
 	anthropicConfig := AnthropicConfig{
-		APIKey:        apiKey,
-		BaseURL:       baseURL,
-		Model:         modelInfo.ID,
-		MaxTokens:     cfg.Model.MaxOutputTokens,
-		Temperature:   cfg.Model.Temperature,
-		StreamEnabled: true,
+		APIKey:         apiKey,
+		BaseURL:        baseURL,
+		Model:          modelInfo.ID,
+		MaxTokens:      cfg.Model.MaxOutputTokens,
+		Temperature:    cfg.Model.Temperature,
+		StreamEnabled:  true,
+		EnableThinking: cfg.Model.EnableThinking,
+		ThinkingBudget: cfg.Model.ThinkingBudget,
 		// Retry configuration from config
 		MaxRetries:  cfg.API.Retry.MaxRetries,
 		RetryDelay:  cfg.API.Retry.RetryDelay,
@@ -327,12 +331,14 @@ func newDeepSeekClient(cfg *config.Config, modelID string) (Client, error) {
 	}
 
 	anthropicConfig := AnthropicConfig{
-		APIKey:        loadedKey.Value,
-		BaseURL:       baseURL,
-		Model:         modelID,
-		MaxTokens:     cfg.Model.MaxOutputTokens,
-		Temperature:   cfg.Model.Temperature,
-		StreamEnabled: true,
+		APIKey:         loadedKey.Value,
+		BaseURL:        baseURL,
+		Model:          modelID,
+		MaxTokens:      cfg.Model.MaxOutputTokens,
+		Temperature:    cfg.Model.Temperature,
+		StreamEnabled:  true,
+		EnableThinking: cfg.Model.EnableThinking,
+		ThinkingBudget: cfg.Model.ThinkingBudget,
 		// Retry configuration from config
 		MaxRetries:  cfg.API.Retry.MaxRetries,
 		RetryDelay:  cfg.API.Retry.RetryDelay,

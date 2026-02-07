@@ -59,7 +59,7 @@ func WriteToolDeclaration() *genai.FunctionDeclaration {
 func EditToolDeclaration() *genai.FunctionDeclaration {
 	return &genai.FunctionDeclaration{
 		Name:        "edit",
-		Description: "Performs exact string replacement in a file. PREFER this over 'write' for modifying existing files — it's safer and preserves unchanged content. Always read the file first to get exact text to match.",
+		Description: "Performs string replacement in a file. Supports three modes: (1) old_string/new_string for exact match, (2) regex=true for regex replacement, (3) line_start/line_end/new_string for line-based replacement. PREFER this over 'write' for modifying existing files.",
 		Parameters: &genai.Schema{
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
@@ -69,18 +69,48 @@ func EditToolDeclaration() *genai.FunctionDeclaration {
 				},
 				"old_string": {
 					Type:        genai.TypeString,
-					Description: "The text to replace (must match exactly)",
+					Description: "The text to find and replace",
 				},
 				"new_string": {
 					Type:        genai.TypeString,
-					Description: "The replacement text",
+					Description: "The text to replace with (must be different from old_string)",
 				},
 				"replace_all": {
 					Type:        genai.TypeBoolean,
-					Description: "If true, replace all occurrences; if false (default), replace only first",
+					Description: "If true, replace all occurrences. If false (default), old_string must be unique.",
+				},
+				"regex": {
+					Type:        genai.TypeBoolean,
+					Description: "If true, treat old_string as a regular expression pattern.",
+				},
+				"line_start": {
+					Type:        genai.TypeInteger,
+					Description: "Start line (1-indexed). Alternative to old_string: replaces lines line_start..line_end with new_string.",
+				},
+				"line_end": {
+					Type:        genai.TypeInteger,
+					Description: "End line (1-indexed, inclusive). Used with line_start.",
+				},
+				"edits": {
+					Type:        genai.TypeArray,
+					Description: "Array of {old_string, new_string} pairs for multiple edits in one call.",
+					Items: &genai.Schema{
+						Type: genai.TypeObject,
+						Properties: map[string]*genai.Schema{
+							"old_string": {
+								Type:        genai.TypeString,
+								Description: "The text to find",
+							},
+							"new_string": {
+								Type:        genai.TypeString,
+								Description: "The text to replace with",
+							},
+						},
+						Required: []string{"old_string", "new_string"},
+					},
 				},
 			},
-			Required: []string{"file_path", "old_string", "new_string"},
+			Required: []string{"file_path"},
 		},
 	}
 }
@@ -373,18 +403,6 @@ func WebSearchToolDeclaration() *genai.FunctionDeclaration {
 	}
 }
 
-// UndoToolDeclaration returns the declaration for the undo tool.
-func UndoToolDeclaration() *genai.FunctionDeclaration {
-	return &genai.FunctionDeclaration{
-		Name:        "undo",
-		Description: "Undoes the last file operation (write or edit).",
-		Parameters: &genai.Schema{
-			Type:       genai.TypeObject,
-			Properties: map[string]*genai.Schema{},
-		},
-	}
-}
-
 // TaskToolDeclaration returns the declaration for the task tool.
 func TaskToolDeclaration() *genai.FunctionDeclaration {
 	return &genai.FunctionDeclaration{
@@ -640,28 +658,6 @@ func CodeGraphToolDeclaration() *genai.FunctionDeclaration {
 				},
 			},
 			Required: []string{"action", "symbol"},
-		},
-	}
-}
-
-// PatternSearchToolDeclaration returns the declaration for the pattern_search tool.
-func PatternSearchToolDeclaration() *genai.FunctionDeclaration {
-	return &genai.FunctionDeclaration{
-		Name:        "pattern_search",
-		Description: "Searches for code patterns using structural matching.",
-		Parameters: &genai.Schema{
-			Type: genai.TypeObject,
-			Properties: map[string]*genai.Schema{
-				"pattern": {
-					Type:        genai.TypeString,
-					Description: "The structural pattern to search for",
-				},
-				"language": {
-					Type:        genai.TypeString,
-					Description: "The programming language (go, python, javascript, etc.)",
-				},
-			},
-			Required: []string{"pattern"},
 		},
 	}
 }
@@ -1061,18 +1057,6 @@ func SemanticSearchToolDeclaration() *genai.FunctionDeclaration {
 	}
 }
 
-// SemanticCleanupToolDeclaration returns the declaration for the semantic_cleanup tool.
-func SemanticCleanupToolDeclaration() *genai.FunctionDeclaration {
-	return &genai.FunctionDeclaration{
-		Name:        "semantic_cleanup",
-		Description: "Cleans up stale semantic search cache entries.",
-		Parameters: &genai.Schema{
-			Type:       genai.TypeObject,
-			Properties: map[string]*genai.Schema{},
-		},
-	}
-}
-
 // VerifyCodeToolDeclaration returns the declaration for the verify_code tool.
 func VerifyCodeToolDeclaration() *genai.FunctionDeclaration {
 	return &genai.FunctionDeclaration{
@@ -1086,24 +1070,6 @@ func VerifyCodeToolDeclaration() *genai.FunctionDeclaration {
 					Description: "The directory to verify (defaults to project root)",
 				},
 			},
-		},
-	}
-}
-
-// CodeOracleToolDeclaration returns the declaration for the code_oracle tool.
-func CodeOracleToolDeclaration() *genai.FunctionDeclaration {
-	return &genai.FunctionDeclaration{
-		Name:        "code_oracle",
-		Description: "Architectural analysis tool. Answers high-level questions about code structure and flow.",
-		Parameters: &genai.Schema{
-			Type: genai.TypeObject,
-			Properties: map[string]*genai.Schema{
-				"query": {
-					Type:        genai.TypeString,
-					Description: "The architectural question to answer",
-				},
-			},
-			Required: []string{"query"},
 		},
 	}
 }
@@ -1172,7 +1138,6 @@ func GetAllDeclarations() map[string]*genai.FunctionDeclaration {
 		"task_stop":            TaskStopToolDeclaration(),
 		"web_fetch":            WebFetchToolDeclaration(),
 		"web_search":           WebSearchToolDeclaration(),
-		"undo":                 UndoToolDeclaration(),
 		"task":                 TaskToolDeclaration(),
 		"kill_shell":           KillShellToolDeclaration(),
 		"memory":               MemoryToolDeclaration(),
@@ -1185,7 +1150,6 @@ func GetAllDeclarations() map[string]*genai.FunctionDeclaration {
 		"batch":                BatchToolDeclaration(),
 		"refactor":             RefactorToolDeclaration(),
 		"code_graph":           CodeGraphToolDeclaration(),
-		"pattern_search":       PatternSearchToolDeclaration(),
 		"check_impact":         CheckImpactToolDeclaration(),
 		"memorize":             MemorizeToolDeclaration(),
 		"tools_list":           ToolsListToolDeclaration(),
@@ -1206,9 +1170,7 @@ func GetAllDeclarations() map[string]*genai.FunctionDeclaration {
 		"shared_memory":        SharedMemoryToolDeclaration(),
 		"update_scratchpad":    UpdateScratchpadToolDeclaration(),
 		"semantic_search":      SemanticSearchToolDeclaration(),
-		"semantic_cleanup":     SemanticCleanupToolDeclaration(),
 		"verify_code":          VerifyCodeToolDeclaration(),
-		"code_oracle":          CodeOracleToolDeclaration(),
 		"pin_context":          PinContextToolDeclaration(),
 		"history_search":       HistorySearchToolDeclaration(),
 		"run_tests":            RunTestsToolDeclaration(),

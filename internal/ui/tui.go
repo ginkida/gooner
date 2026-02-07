@@ -1516,6 +1516,7 @@ func (m *Model) handleMessageTypes(msg tea.Msg) tea.Cmd {
 		m.planningModeEnabled = msg.PlanningModeEnabled
 		if msg.ModelName != "" {
 			m.currentModel = msg.ModelName
+			setTerminalTitle(fmt.Sprintf("Gokin · %s · %s", m.currentModel, shortenPath(m.workDir, 30)))
 		}
 
 	// Planning mode toggle result (async)

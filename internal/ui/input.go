@@ -116,7 +116,6 @@ func defaultCommands() []CommandInfo {
 		{Name: "sessions", Description: "List saved sessions", Category: "Session"},
 
 		// History commands
-		{Name: "undo", Description: "Undo the last file change", Category: "History"},
 		{
 			Name:        "checkpoint",
 			Description: "Create a checkpoint",

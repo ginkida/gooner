@@ -51,24 +51,109 @@ func NewManager(servers []*ServerConfig) *Manager {
 	return m
 }
 
+// defaultServerTimeout is the per-server connection timeout.
+const defaultServerTimeout = 15 * time.Second
+
+// serverResult holds the result of a single server connection attempt.
+type serverResult struct {
+	name  string
+	client *Client
+	tools  []tools.Tool
+	err    error
+}
+
 // ConnectAll connects to all servers configured for auto-connect.
+// Connections are made in parallel with per-server timeouts.
 func (m *Manager) ConnectAll(ctx context.Context) error {
-	var errs []error
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	// Collect auto-connect servers under read lock
+	m.mu.RLock()
+	var toConnect []*ServerConfig
 	for name, cfg := range m.servers {
 		if !cfg.AutoConnect {
 			logging.Debug("MCP server skipped (auto_connect=false)", "name", name)
 			continue
 		}
+		toConnect = append(toConnect, cfg)
+	}
+	m.mu.RUnlock()
 
-		if err := m.connectServer(ctx, cfg); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+	if len(toConnect) == 0 {
+		return nil
+	}
+
+	// Connect to all servers in parallel
+	results := make(chan serverResult, len(toConnect))
+	var wg sync.WaitGroup
+
+	for _, cfg := range toConnect {
+		wg.Add(1)
+		go func(cfg *ServerConfig) {
+			defer wg.Done()
+
+			serverCtx, cancel := context.WithTimeout(ctx, defaultServerTimeout)
+			defer cancel()
+
+			res := serverResult{name: cfg.Name}
+
+			// Create client (no lock needed — pure network I/O)
+			client, err := NewClient(cfg)
+			if err != nil {
+				res.err = fmt.Errorf("failed to create client: %w", err)
+				results <- res
+				return
+			}
+
+			// Initialize connection
+			if err := client.Initialize(serverCtx); err != nil {
+				client.Close()
+				res.err = fmt.Errorf("initialization failed: %w", err)
+				results <- res
+				return
+			}
+
+			// List tools
+			mcpTools, err := client.ListTools(serverCtx)
+			if err != nil {
+				client.Close()
+				res.err = fmt.Errorf("failed to list tools: %w", err)
+				results <- res
+				return
+			}
+
+			// Create tool wrappers
+			for _, t := range mcpTools {
+				tool := NewMCPTool(client, cfg.Name, cfg.ToolPrefix, t)
+				res.tools = append(res.tools, tool)
+			}
+
+			res.client = client
+			results <- res
+		}(cfg)
+	}
+
+	// Close results channel when all goroutines complete
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results under write lock
+	var errs []error
+	m.mu.Lock()
+	for res := range results {
+		if res.err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", res.name, res.err))
 			continue
 		}
+
+		m.clients[res.name] = res.client
+		m.tools = append(m.tools, res.tools...)
+
+		logging.Info("MCP server connected",
+			"name", res.name,
+			"tools", len(res.tools))
 	}
+	m.mu.Unlock()
 
 	if len(errs) > 0 {
 		return errors.Join(errs...)

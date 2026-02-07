@@ -128,8 +128,17 @@ func (c *OllamaClient) SendMessage(ctx context.Context, message string) (*Stream
 
 // SendMessageWithHistory sends a message with conversation history.
 func (c *OllamaClient) SendMessageWithHistory(ctx context.Context, history []*genai.Content, message string) (*StreamingResponse, error) {
-	// Convert Gemini format to Ollama format
-	messages := c.convertHistoryToMessages(history, message)
+	var messages []api.Message
+
+	// For fallback models, convert FunctionCall/FunctionResponse parts to text
+	if c.NeedsToolCallFallback() {
+		messages = c.convertHistoryForFallback(history, nil)
+		if message != "" {
+			messages = append(messages, api.Message{Role: "user", Content: message})
+		}
+	} else {
+		messages = c.convertHistoryToMessages(history, message)
+	}
 
 	// Build request
 	req := &api.ChatRequest{
@@ -146,20 +155,29 @@ func (c *OllamaClient) SendMessageWithHistory(ctx context.Context, history []*ge
 		req.Options["temperature"] = c.config.Temperature
 	}
 
-	// Convert and add tools if available
-	c.mu.RLock()
-	if len(c.tools) > 0 {
-		req.Tools = c.convertToolsToOllama()
+	// Only include native tools for models that support them
+	if !c.NeedsToolCallFallback() {
+		c.mu.RLock()
+		if len(c.tools) > 0 {
+			req.Tools = c.convertToolsToOllama()
+		}
+		c.mu.RUnlock()
 	}
-	c.mu.RUnlock()
 
 	return c.streamChat(ctx, req)
 }
 
 // SendFunctionResponse sends function call results back to the model.
 func (c *OllamaClient) SendFunctionResponse(ctx context.Context, history []*genai.Content, results []*genai.FunctionResponse) (*StreamingResponse, error) {
-	// Convert history with function results
-	messages := c.convertHistoryWithResults(history, results)
+	var messages []api.Message
+
+	// For models without native tool support, convert tool results to user messages
+	// instead of tool role messages (which these models don't understand)
+	if c.NeedsToolCallFallback() {
+		messages = c.convertHistoryForFallback(history, results)
+	} else {
+		messages = c.convertHistoryWithResults(history, results)
+	}
 
 	req := &api.ChatRequest{
 		Model:    c.config.Model,
@@ -174,11 +192,14 @@ func (c *OllamaClient) SendFunctionResponse(ctx context.Context, history []*gena
 		req.Options["temperature"] = c.config.Temperature
 	}
 
-	c.mu.RLock()
-	if len(c.tools) > 0 {
-		req.Tools = c.convertToolsToOllama()
+	// Only include native tools for models that support them
+	if !c.NeedsToolCallFallback() {
+		c.mu.RLock()
+		if len(c.tools) > 0 {
+			req.Tools = c.convertToolsToOllama()
+		}
+		c.mu.RUnlock()
 	}
-	c.mu.RUnlock()
 
 	return c.streamChat(ctx, req)
 }
@@ -343,6 +364,9 @@ func (c *OllamaClient) SetSystemInstruction(instruction string) {
 	c.systemInstruction = instruction
 }
 
+// SetThinkingBudget is a no-op for Ollama (not supported).
+func (c *OllamaClient) SetThinkingBudget(budget int32) {}
+
 // SetTools sets the tools available for function calling.
 func (c *OllamaClient) SetTools(tools []*genai.Tool) {
 	c.mu.Lock()
@@ -429,6 +453,13 @@ func (c *OllamaClient) WithModel(modelName string) Client {
 // GetRawClient returns the underlying Ollama client.
 func (c *OllamaClient) GetRawClient() interface{} {
 	return c.client
+}
+
+// NeedsToolCallFallback returns true if this client should use text-based
+// tool call parsing as a fallback (for models without native function calling).
+func (c *OllamaClient) NeedsToolCallFallback() bool {
+	profile := GetModelProfile(c.config.Model)
+	return !profile.SupportsTools
 }
 
 // Close closes the client connection.
@@ -572,6 +603,92 @@ func (c *OllamaClient) convertContentToMessage(content *genai.Content) api.Messa
 	msg.ToolCalls = toolCalls
 
 	return msg
+}
+
+// convertHistoryForFallback converts history for models using text-based tool calling.
+// FunctionCall parts in model messages become plain text, and tool results become user messages.
+func (c *OllamaClient) convertHistoryForFallback(history []*genai.Content, results []*genai.FunctionResponse) []api.Message {
+	messages := make([]api.Message, 0, len(history)+len(results)+1)
+
+	// Prepend system instruction if set
+	c.mu.RLock()
+	sysInstruction := c.systemInstruction
+	c.mu.RUnlock()
+	if sysInstruction != "" {
+		messages = append(messages, api.Message{Role: "system", Content: sysInstruction})
+	}
+
+	// Convert history, converting FunctionCall parts to text
+	for _, content := range history {
+		msg := api.Message{}
+
+		switch content.Role {
+		case genai.RoleUser:
+			msg.Role = "user"
+		case genai.RoleModel:
+			msg.Role = "assistant"
+		default:
+			msg.Role = string(content.Role)
+		}
+
+		var textParts []string
+		for _, part := range content.Parts {
+			if part.Text != "" {
+				textParts = append(textParts, part.Text)
+			}
+			// Convert FunctionCall to text representation for fallback models
+			if part.FunctionCall != nil {
+				argsJSON, _ := json.Marshal(part.FunctionCall.Args)
+				textParts = append(textParts, fmt.Sprintf(
+					"```json\n{\"tool\": \"%s\", \"args\": %s}\n```",
+					part.FunctionCall.Name, string(argsJSON)))
+			}
+			// Convert FunctionResponse to text
+			if part.FunctionResponse != nil {
+				var contentStr string
+				if val, ok := part.FunctionResponse.Response["content"].(string); ok {
+					contentStr = val
+				} else {
+					jsonBytes, _ := json.Marshal(part.FunctionResponse.Response)
+					contentStr = string(jsonBytes)
+				}
+				textParts = append(textParts, fmt.Sprintf(
+					"Tool result for %s:\n%s", part.FunctionResponse.Name, contentStr))
+			}
+		}
+
+		msg.Content = strings.Join(textParts, "\n")
+		if msg.Content != "" {
+			messages = append(messages, msg)
+		}
+	}
+
+	// Add new tool results as user messages
+	for _, result := range results {
+		var contentStr string
+		if result.Response != nil {
+			if val, ok := result.Response["content"].(string); ok {
+				contentStr = val
+			} else if data, ok := result.Response["data"]; ok {
+				if jsonBytes, err := json.Marshal(data); err == nil {
+					contentStr = string(jsonBytes)
+				}
+			}
+			if errStr, ok := result.Response["error"].(string); ok && errStr != "" {
+				contentStr = "Error: " + errStr
+			}
+		}
+		if contentStr == "" {
+			contentStr = "Operation completed"
+		}
+
+		messages = append(messages, api.Message{
+			Role:    "user",
+			Content: fmt.Sprintf("Tool result for %s:\n%s", result.Name, contentStr),
+		})
+	}
+
+	return messages
 }
 
 // convertHistoryWithResults converts history with function results to messages.

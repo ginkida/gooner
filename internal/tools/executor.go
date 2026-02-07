@@ -352,6 +352,18 @@ func (e *Executor) executeLoop(ctx context.Context, history []*genai.Content) ([
 			return history, "", fmt.Errorf("model response error: %w", err)
 		}
 
+		// Text-based tool call fallback for models without native function calling
+		if len(resp.FunctionCalls) == 0 && resp.Text != "" {
+			if fallbackClient, ok := e.client.(interface{ NeedsToolCallFallback() bool }); ok && fallbackClient.NeedsToolCallFallback() {
+				if parsed := client.ParseToolCallsFromText(resp.Text); len(parsed) > 0 {
+					resp.FunctionCalls = parsed
+					// Strip the JSON from text since we're treating it as a tool call
+					resp.Text = ""
+					logging.Info("fallback: parsed tool calls from text", "count", len(parsed))
+				}
+			}
+		}
+
 		// Add model response to history (with mutex protection)
 		modelContent := &genai.Content{
 			Role:  genai.RoleModel,
@@ -394,6 +406,17 @@ func (e *Executor) executeLoop(ctx context.Context, history []*genai.Content) ([
 			resp, err = e.collectStreamWithHandler(ctx, stream)
 			if err != nil {
 				return history, "", err
+			}
+
+			// Text-based tool call fallback for chained calls
+			if len(resp.FunctionCalls) == 0 && resp.Text != "" {
+				if fallbackClient, ok := e.client.(interface{ NeedsToolCallFallback() bool }); ok && fallbackClient.NeedsToolCallFallback() {
+					if parsed := client.ParseToolCallsFromText(resp.Text); len(parsed) > 0 {
+						resp.FunctionCalls = parsed
+						resp.Text = ""
+						logging.Info("fallback: parsed chained tool calls from text", "count", len(parsed))
+					}
+				}
 			}
 
 			// CRITICAL: Add function results to history for chained tool calls

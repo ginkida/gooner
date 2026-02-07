@@ -96,6 +96,112 @@ func (r *Registry) GeminiTools() []*genai.Tool {
 	}
 }
 
+// ToolSet defines a named group of tools.
+type ToolSet string
+
+const (
+	// ToolSetCore contains essential tools always available.
+	ToolSetCore ToolSet = "core"
+	// ToolSetGit contains git-related tools.
+	ToolSetGit ToolSet = "git"
+	// ToolSetPlanning contains plan mode tools.
+	ToolSetPlanning ToolSet = "planning"
+	// ToolSetAgent contains agent/coordination tools.
+	ToolSetAgent ToolSet = "agent"
+	// ToolSetWeb contains web fetch/search tools.
+	ToolSetWeb ToolSet = "web"
+	// ToolSetAdvanced contains advanced code analysis tools.
+	ToolSetAdvanced ToolSet = "advanced"
+	// ToolSetMemory contains memory and context tools.
+	ToolSetMemory ToolSet = "memory"
+	// ToolSetFileOps contains file management tools beyond core read/write/edit.
+	ToolSetFileOps ToolSet = "fileops"
+	// ToolSetSemantic contains semantic search tools (requires embeddings).
+	ToolSetSemantic ToolSet = "semantic"
+	// ToolSetOllamaCore is a minimal set for Ollama models.
+	ToolSetOllamaCore ToolSet = "ollama_core"
+)
+
+// toolSetDefinitions maps tool sets to their member tool names.
+var toolSetDefinitions = map[ToolSet][]string{
+	ToolSetCore: {
+		"read", "write", "edit", "bash", "glob", "grep",
+		"ask_user", "list_dir", "tree", "diff", "todo",
+		"tools_list", "request_tool",
+	},
+	ToolSetGit: {
+		"git_status", "git_diff", "git_add", "git_commit",
+		"git_log", "git_blame", "git_branch", "git_pr",
+	},
+	ToolSetPlanning: {
+		"enter_plan_mode", "update_plan_progress", "get_plan_status",
+		"exit_plan_mode", "undo_plan", "redo_plan",
+		"task", "task_output", "task_stop",
+	},
+	ToolSetAgent: {
+		"ask_agent", "coordinate", "shared_memory", "update_scratchpad",
+	},
+	ToolSetWeb: {
+		"web_fetch", "web_search",
+	},
+	ToolSetAdvanced: {
+		"batch", "refactor", "check_impact",
+		"verify_code", "run_tests",
+	},
+	ToolSetSemantic: {
+		"semantic_search", "code_graph",
+	},
+	ToolSetMemory: {
+		"memory", "memorize", "pin_context", "history_search",
+	},
+	ToolSetFileOps: {
+		"copy", "move", "delete", "mkdir",
+		"env", "kill_shell", "ssh",
+	},
+	ToolSetOllamaCore: {
+		"read", "write", "edit", "bash", "glob", "grep",
+		"ask_user", "list_dir", "todo",
+	},
+}
+
+// FilteredDeclarations returns declarations for only the specified tool sets.
+func (r *Registry) FilteredDeclarations(sets ...ToolSet) []*genai.FunctionDeclaration {
+	allowed := r.toolNamesFromSets(sets...)
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	decls := make([]*genai.FunctionDeclaration, 0, len(allowed))
+	for name, tool := range r.tools {
+		if allowed[name] {
+			decls = append(decls, tool.Declaration())
+		}
+	}
+	return decls
+}
+
+// FilteredGeminiTools returns tools in Gemini format for the specified tool sets.
+func (r *Registry) FilteredGeminiTools(sets ...ToolSet) []*genai.Tool {
+	return []*genai.Tool{
+		{
+			FunctionDeclarations: r.FilteredDeclarations(sets...),
+		},
+	}
+}
+
+// toolNamesFromSets returns a set of tool names from the given tool sets.
+func (r *Registry) toolNamesFromSets(sets ...ToolSet) map[string]bool {
+	names := make(map[string]bool)
+	for _, set := range sets {
+		if tools, ok := toolSetDefinitions[set]; ok {
+			for _, name := range tools {
+				names[name] = true
+			}
+		}
+	}
+	return names
+}
+
 // DefaultRegistry creates a registry with all default tools.
 func DefaultRegistry(workDir string) *Registry {
 	r := NewRegistry()
@@ -117,7 +223,6 @@ func DefaultRegistry(workDir string) *Registry {
 	r.MustRegister(NewTaskStopTool())
 	r.MustRegister(NewWebFetchTool())
 	r.MustRegister(NewWebSearchTool())
-	r.MustRegister(NewUndoTool())
 	r.MustRegister(NewTaskTool())
 	r.MustRegister(NewKillShellTool())
 	r.MustRegister(NewMemoryTool())
@@ -130,7 +235,6 @@ func DefaultRegistry(workDir string) *Registry {
 	r.MustRegister(NewBatchTool(workDir))
 	r.MustRegister(NewRefactorTool())
 	r.MustRegister(NewCodeGraphTool())
-	r.MustRegister(NewPatternSearchTool())
 	r.MustRegister(NewToolsListTool(r))
 	r.MustRegister(NewRequestToolTool())
 	r.MustRegister(NewAskAgentTool())
@@ -387,8 +491,6 @@ func DefaultLazyRegistry(workDir string) *LazyRegistry {
 	r.RegisterFactory("diff", func() Tool { return NewDiffTool() }, declarations["diff"])
 	r.RegisterFactory("env", func() Tool { return NewEnvTool() }, declarations["env"])
 	r.RegisterFactory("todo", func() Tool { return NewTodoTool() }, declarations["todo"])
-	r.RegisterFactory("undo", func() Tool { return NewUndoTool() }, declarations["undo"])
-
 	// User interaction
 	r.RegisterFactory("ask_user", func() Tool { return NewAskUserTool() }, declarations["ask_user"])
 	r.RegisterFactory("ask_agent", func() Tool { return NewAskAgentTool() }, declarations["ask_agent"])
@@ -413,7 +515,6 @@ func DefaultLazyRegistry(workDir string) *LazyRegistry {
 	r.RegisterFactory("batch", func() Tool { return NewBatchTool(workDir) }, declarations["batch"])
 	r.RegisterFactory("refactor", func() Tool { return NewRefactorTool() }, declarations["refactor"])
 	r.RegisterFactory("code_graph", func() Tool { return NewCodeGraphTool() }, declarations["code_graph"])
-	r.RegisterFactory("pattern_search", func() Tool { return NewPatternSearchTool() }, declarations["pattern_search"])
 
 	// Git tools
 	r.RegisterFactory("git_log", func() Tool { return NewGitLogTool(workDir) }, declarations["git_log"])
@@ -434,7 +535,6 @@ func DefaultLazyRegistry(workDir string) *LazyRegistry {
 	r.RegisterFactory("request_tool", func() Tool { return NewRequestToolTool() }, declarations["request_tool"])
 	r.RegisterFactory("update_scratchpad", func() Tool { return NewUpdateScratchpadTool(nil) }, declarations["update_scratchpad"])
 	r.RegisterFactory("verify_code", func() Tool { return NewVerifyCodeTool(workDir) }, declarations["verify_code"])
-	r.RegisterFactory("code_oracle", func() Tool { return NewCodeOracleTool(workDir, r) }, declarations["code_oracle"])
 	r.RegisterFactory("check_impact", func() Tool { return NewCheckImpactTool(workDir) }, declarations["check_impact"])
 	r.RegisterFactory("memorize", func() Tool { return NewMemorizeTool(nil) }, declarations["memorize"])
 

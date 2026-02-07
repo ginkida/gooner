@@ -78,8 +78,6 @@ func NewHandler() *Handler {
 	h.Register(&SaveCommand{})
 	h.Register(&ResumeCommand{})
 	h.Register(&SessionsCommand{})
-	h.Register(&UndoCommand{})
-
 	// Register git commands
 	h.Register(&CommitCommand{})
 	h.Register(&PRCommand{})
@@ -108,7 +106,6 @@ func NewHandler() *Handler {
 	// Register semantic commands
 	h.Register(&SemanticStatsCommand{})
 	h.Register(&SemanticReindexCommand{})
-	h.Register(&SemanticCleanupCommand{})
 
 	// Register onboarding commands
 	h.Register(&QuickstartCommand{})

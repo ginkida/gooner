@@ -57,6 +57,12 @@ func ClearBadgeCmd() tea.Cmd {
 	}
 }
 
+// setTerminalTitle sets the terminal window title via OSC-0 escape sequence.
+// Visible in terminal tabs, tmux, iTerm2, etc.
+func setTerminalTitle(title string) {
+	fmt.Fprintf(os.Stderr, "\033]0;%s\a", title)
+}
+
 // Welcome displays a minimalist welcome message using lipgloss borders.
 func (m *Model) Welcome() {
 	titleStyle := lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
@@ -79,6 +85,9 @@ func (m *Model) Welcome() {
 	if m.tokenUsage != nil {
 		contextStr = fmt.Sprintf("%.0f%%", m.tokenUsage.PercentUsed*100)
 	}
+
+	// Set terminal window title
+	setTerminalTitle(fmt.Sprintf("Gokin · %s · %s", modelName, dir))
 
 	// 4 lines of content
 	line1 := titleStyle.Render("GOKIN")
@@ -104,7 +113,7 @@ func (m *Model) Welcome() {
 	suggestions := suggestionStyle.Render("  Try: ") +
 		promptStyle.Render("\"describe this project\"") +
 		suggestionStyle.Render(" · ") +
-		promptStyle.Render("\"find bugs in main.go\"") +
+		promptStyle.Render("/quickstart") +
 		suggestionStyle.Render(" · ") +
 		promptStyle.Render("/help")
 	m.output.AppendLine(suggestions)
@@ -198,7 +207,6 @@ func (m Model) getCommandHint(input string) string {
 		"save":        "Save the current session to disk",
 		"resume":      "Resume a previously saved session",
 		"sessions":    "List all saved sessions",
-		"undo":        "Undo the last file change",
 		"commit":      "Create a git commit with AI-generated message",
 		"pr":          "Create a pull request",
 		"checkpoint":  "Save a checkpoint of the current state",

@@ -147,6 +147,8 @@ func (c *AnthropicClient) SendMessageWithHistory(ctx context.Context, history []
 	// Use explicit system instruction if set, otherwise fall back to heuristic extraction
 	c.mu.RLock()
 	sysInstruction := c.systemInstruction
+	enableThinking := c.config.EnableThinking
+	thinkingBudget := c.config.ThinkingBudget
 	c.mu.RUnlock()
 
 	var messages []map[string]interface{}
@@ -174,10 +176,10 @@ func (c *AnthropicClient) SendMessageWithHistory(ctx context.Context, history []
 	}
 
 	// Extended Thinking support
-	if c.config.EnableThinking && c.config.ThinkingBudget > 0 {
+	if enableThinking && thinkingBudget > 0 {
 		requestBody["thinking"] = map[string]interface{}{
 			"type":          "enabled",
-			"budget_tokens": c.config.ThinkingBudget,
+			"budget_tokens": thinkingBudget,
 		}
 		// Extended thinking requires temperature=1 (Anthropic requirement)
 		requestBody["temperature"] = 1.0
@@ -201,6 +203,8 @@ func (c *AnthropicClient) SendFunctionResponse(ctx context.Context, history []*g
 	// Use explicit system instruction if set, otherwise fall back to heuristic extraction
 	c.mu.RLock()
 	sysInstruction := c.systemInstruction
+	enableThinking := c.config.EnableThinking
+	thinkingBudget := c.config.ThinkingBudget
 	c.mu.RUnlock()
 
 	var messages []map[string]interface{}
@@ -224,6 +228,17 @@ func (c *AnthropicClient) SendFunctionResponse(ctx context.Context, history []*g
 		requestBody["system"] = systemPrompt
 	}
 
+	// Extended Thinking support
+	if enableThinking && thinkingBudget > 0 {
+		requestBody["thinking"] = map[string]interface{}{
+			"type":          "enabled",
+			"budget_tokens": thinkingBudget,
+		}
+		requestBody["temperature"] = 1.0
+	} else if c.config.Temperature > 0 {
+		requestBody["temperature"] = c.config.Temperature
+	}
+
 	if len(c.tools) > 0 {
 		requestBody["tools"] = c.convertToolsToAnthropic()
 	}
@@ -236,6 +251,14 @@ func (c *AnthropicClient) SetSystemInstruction(instruction string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.systemInstruction = instruction
+}
+
+// SetThinkingBudget configures the thinking/reasoning budget.
+func (c *AnthropicClient) SetThinkingBudget(budget int32) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.config.EnableThinking = budget > 0
+	c.config.ThinkingBudget = budget
 }
 
 // SetTools sets the tools available for function calling.

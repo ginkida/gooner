@@ -95,6 +95,16 @@ func NewErrorResult(errMsg string) ToolResult {
 	}
 }
 
+// NewErrorResultWithContext creates a failed tool result with file context.
+// The context is included so the model can retry without a separate read call.
+func NewErrorResultWithContext(errMsg string, fileContext string) ToolResult {
+	return ToolResult{
+		Error:   errMsg,
+		Content: fileContext,
+		Success: false,
+	}
+}
+
 // ToMap converts the result to a map for Gemini function response.
 // Content is truncated to DefaultToolResultMaxChars to prevent API payload overflow.
 func (r ToolResult) ToMap() map[string]any {
@@ -116,6 +126,15 @@ func (r ToolResult) ToMap() map[string]any {
 	} else {
 		result["success"] = false
 		result["error"] = r.Error
+		if r.Content != "" {
+			content := r.Content
+			maxChars := config.DefaultToolResultMaxChars
+			if len(content) > maxChars {
+				content = content[:maxChars] + fmt.Sprintf(
+					"\n... (truncated: %d of %d chars)", maxChars, len(r.Content))
+			}
+			result["content"] = content
+		}
 	}
 
 	return result

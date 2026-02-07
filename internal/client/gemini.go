@@ -27,6 +27,7 @@ type GeminiClient struct {
 	retryDelay        time.Duration  // Initial delay between retries (default: 1s)
 	statusCallback    StatusCallback // Optional callback for status updates
 	systemInstruction string         // System-level instruction passed via API parameter
+	thinkingBudget    int32          // Thinking budget (0 = disabled)
 }
 
 // NewGeminiClient creates a new Gemini API client (returns Client interface).
@@ -85,6 +86,11 @@ func NewGeminiClient(ctx context.Context, cfg *config.Config) (Client, error) {
 // SetSystemInstruction sets the system-level instruction for the model.
 func (c *GeminiClient) SetSystemInstruction(instruction string) {
 	c.systemInstruction = instruction
+}
+
+// SetThinkingBudget configures the thinking/reasoning budget.
+func (c *GeminiClient) SetThinkingBudget(budget int32) {
+	c.thinkingBudget = budget
 }
 
 // SetTools sets the tools available for function calling.
@@ -319,6 +325,12 @@ func (c *GeminiClient) doGenerateContentStream(ctx context.Context, contents []*
 	if c.systemInstruction != "" {
 		config.SystemInstruction = genai.NewContentFromText(c.systemInstruction, genai.RoleUser)
 	}
+	if c.thinkingBudget > 0 {
+		config.ThinkingConfig = &genai.ThinkingConfig{
+			IncludeThoughts: true,
+			ThinkingBudget:  Ptr(c.thinkingBudget),
+		}
+	}
 	if len(c.tools) > 0 {
 		config.Tools = c.tools
 	}
@@ -496,6 +508,10 @@ func processResponse(resp *genai.GenerateContentResponse) ResponseChunk {
 		chunk.Parts = candidate.Content.Parts
 
 		for _, part := range candidate.Content.Parts {
+			if part.Thought {
+				chunk.Thinking += part.Text
+				continue
+			}
 			if part.Text != "" {
 				chunk.Text += part.Text
 			}
@@ -585,6 +601,7 @@ func (c *GeminiClient) WithModel(modelName string) Client {
 		retryDelay:        c.retryDelay,
 		statusCallback:    c.statusCallback,
 		systemInstruction: c.systemInstruction,
+		thinkingBudget:    c.thinkingBudget,
 	}
 }
 

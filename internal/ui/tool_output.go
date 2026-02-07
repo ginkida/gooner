@@ -319,8 +319,6 @@ func (r *ExecutionStatusRenderer) RenderStart(toolName string, summary interface
 		icon = "🌐"
 	case "batch":
 		icon = "📦"
-	case "undo":
-		icon = "↩️ "
 	default:
 		icon = "🔧"
 	}

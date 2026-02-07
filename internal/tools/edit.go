@@ -13,6 +13,8 @@ import (
 	"gokin/internal/undo"
 )
 
+const editContextMaxChars = 5000
+
 // EditTool performs search/replace operations in files.
 type EditTool struct {
 	undoManager   *undo.Manager
@@ -65,7 +67,7 @@ func (t *EditTool) Name() string {
 }
 
 func (t *EditTool) Description() string {
-	return "Performs string replacement in a file. The old_string must be unique in the file unless replace_all is true. Use regex=true to treat old_string as a regular expression."
+	return "Performs string replacement in a file. Supports three modes: (1) old_string/new_string for exact match replacement, (2) regex=true for regex replacement, (3) line_start/line_end/new_string for line-based replacement."
 }
 
 func (t *EditTool) Declaration() *genai.FunctionDeclaration {
@@ -94,6 +96,14 @@ func (t *EditTool) Declaration() *genai.FunctionDeclaration {
 				"regex": {
 					Type:        genai.TypeBoolean,
 					Description: "If true, treat old_string as a regular expression pattern.",
+				},
+				"line_start": {
+					Type:        genai.TypeInteger,
+					Description: "Start line (1-indexed). Alternative to old_string: replaces lines line_start..line_end with new_string.",
+				},
+				"line_end": {
+					Type:        genai.TypeInteger,
+					Description: "End line (1-indexed, inclusive). Used with line_start.",
 				},
 				"edits": {
 					Type:        genai.TypeArray,
@@ -145,10 +155,21 @@ func (t *EditTool) Validate(args map[string]any) error {
 		return nil
 	}
 
+	// Line-based edit mode
+	if lineStart, hasStart := GetInt(args, "line_start"); hasStart && lineStart > 0 {
+		if _, hasEnd := GetInt(args, "line_end"); !hasEnd {
+			return NewValidationError("line_end", "required when line_start is provided")
+		}
+		if _, ok := GetString(args, "new_string"); !ok {
+			return NewValidationError("new_string", "required for line-based editing")
+		}
+		return nil
+	}
+
 	// Single edit mode
 	oldStr, ok := GetString(args, "old_string")
 	if !ok || oldStr == "" {
-		return NewValidationError("old_string", "is required (or provide edits array)")
+		return NewValidationError("old_string", "is required (or provide edits array or line_start/line_end)")
 	}
 
 	newStr, ok := GetString(args, "new_string")
@@ -169,6 +190,13 @@ func (t *EditTool) Execute(ctx context.Context, args map[string]any) (ToolResult
 	// Check for multi-edit mode
 	if edits, ok := args["edits"].([]any); ok && len(edits) > 0 {
 		return t.executeMultiEdit(ctx, filePath, edits)
+	}
+
+	// Check for line-based edit mode
+	if lineStart, hasStart := GetInt(args, "line_start"); hasStart && lineStart > 0 {
+		lineEnd := GetIntDefault(args, "line_end", lineStart)
+		newStr, _ := GetString(args, "new_string")
+		return t.executeLineEdit(ctx, filePath, lineStart, lineEnd, newStr)
 	}
 
 	oldStr, _ := GetString(args, "old_string")
@@ -225,7 +253,9 @@ func (t *EditTool) Execute(ctx context.Context, args map[string]any) (ToolResult
 		count = len(matches)
 
 		if count == 0 {
-			return NewErrorResult(fmt.Sprintf("regex pattern not found in file: %s", filePath)), nil
+			errMsg := fmt.Sprintf("regex pattern not found in file: %s", filePath)
+			fileCtx := extractFileContext(content, editContextMaxChars)
+			return NewErrorResultWithContext(errMsg, fileCtx), nil
 		}
 
 		if count > 1 && !replaceAll {
@@ -267,7 +297,12 @@ func (t *EditTool) Execute(ctx context.Context, args map[string]any) (ToolResult
 		count = strings.Count(content, oldStr)
 
 		if count == 0 {
-			return NewErrorResult(fmt.Sprintf("old_string not found in file: %s", filePath)), nil
+			errMsg := fmt.Sprintf("old_string not found in file: %s", filePath)
+			if actual, line := findFuzzyMatch(content, oldStr); actual != "" {
+				errMsg += fmt.Sprintf("\n\nFuzzy match at line %d (whitespace differs). Actual text:\n```\n%s\n```\nUse this exact text as old_string.", line, actual)
+			}
+			fileCtx := extractFileContext(content, editContextMaxChars)
+			return NewErrorResultWithContext(errMsg, fileCtx), nil
 		}
 
 		if count > 1 && !replaceAll {
@@ -372,7 +407,12 @@ func (t *EditTool) executeMultiEdit(ctx context.Context, filePath string, edits 
 
 		count := strings.Count(content, oldStr)
 		if count == 0 {
-			return NewErrorResult(fmt.Sprintf("edit[%d]: old_string not found in file after previous edits", i)), nil
+			errMsg := fmt.Sprintf("edit[%d]: old_string not found in file after previous edits", i)
+			if actual, line := findFuzzyMatch(content, oldStr); actual != "" {
+				errMsg += fmt.Sprintf("\n\nFuzzy match at line %d. Actual text:\n```\n%s\n```", line, actual)
+			}
+			fileCtx := extractFileContext(content, editContextMaxChars)
+			return NewErrorResultWithContext(errMsg, fileCtx), nil
 		}
 
 		content = strings.Replace(content, oldStr, newStr, 1)
@@ -403,4 +443,159 @@ func (t *EditTool) executeMultiEdit(ctx context.Context, filePath string, edits 
 	}
 
 	return NewSuccessResult(fmt.Sprintf("Applied %d edit(s) to %s", totalReplacements, filePath)), nil
+}
+
+// executeLineEdit replaces a range of lines in a file.
+func (t *EditTool) executeLineEdit(ctx context.Context, filePath string, lineStart, lineEnd int, newStr string) (ToolResult, error) {
+	// Validate path
+	if t.pathValidator == nil {
+		return NewErrorResult("security error: path validator not initialized"), nil
+	}
+	validPath, err := t.pathValidator.ValidateFile(filePath)
+	if err != nil {
+		return NewErrorResult(fmt.Sprintf("path validation failed: %s", err)), nil
+	}
+	filePath = validPath
+
+	// Read file
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return NewErrorResult(fmt.Sprintf("file not found: %s", filePath)), nil
+		}
+		return NewErrorResult(fmt.Sprintf("error reading file: %s", err)), nil
+	}
+
+	content := string(data)
+	lines := strings.Split(content, "\n")
+	totalLines := len(lines)
+
+	// Validate range
+	if lineStart < 1 {
+		return NewErrorResult("line_start must be >= 1"), nil
+	}
+	if lineEnd < lineStart {
+		return NewErrorResult(fmt.Sprintf("line_end (%d) must be >= line_start (%d)", lineEnd, lineStart)), nil
+	}
+	if lineStart > totalLines {
+		errMsg := fmt.Sprintf("line_start (%d) exceeds file length (%d lines)", lineStart, totalLines)
+		fileCtx := extractFileContext(content, editContextMaxChars)
+		return NewErrorResultWithContext(errMsg, fileCtx), nil
+	}
+
+	// Clamp lineEnd to file length
+	if lineEnd > totalLines {
+		lineEnd = totalLines
+	}
+
+	// Build new content: lines before + new text + lines after
+	var parts []string
+	if lineStart > 1 {
+		parts = append(parts, lines[:lineStart-1]...)
+	}
+	if newStr != "" {
+		parts = append(parts, strings.Split(newStr, "\n")...)
+	}
+	if lineEnd < totalLines {
+		parts = append(parts, lines[lineEnd:]...)
+	}
+
+	newContent := strings.Join(parts, "\n")
+
+	// Show diff preview
+	if t.diffEnabled && t.diffHandler != nil && !ShouldSkipDiff(ctx) {
+		approved, err := t.diffHandler.PromptDiff(ctx, filePath, content, newContent, "edit", false)
+		if err != nil {
+			return NewErrorResult(fmt.Sprintf("diff preview error: %s", err)), nil
+		}
+		if !approved {
+			return NewErrorResult("changes rejected by user"), nil
+		}
+	}
+
+	// Write atomically
+	newContentBytes := []byte(newContent)
+	if err := AtomicWrite(filePath, newContentBytes, 0644); err != nil {
+		return NewErrorResult(fmt.Sprintf("error writing file: %s", err)), nil
+	}
+
+	// Record change for undo
+	if t.undoManager != nil {
+		change := undo.NewFileChange(filePath, "edit", data, newContentBytes, false)
+		t.undoManager.Record(*change)
+	}
+
+	replacedCount := lineEnd - lineStart + 1
+	return NewSuccessResult(fmt.Sprintf("Replaced lines %d-%d (%d lines) in %s", lineStart, lineEnd, replacedCount, filePath)), nil
+}
+
+// extractFileContext formats file content with line numbers for error context.
+func extractFileContext(content string, maxChars int) string {
+	lines := strings.Split(content, "\n")
+	var b strings.Builder
+	for i, line := range lines {
+		s := fmt.Sprintf("%6d\t%s\n", i+1, line)
+		if b.Len()+len(s) > maxChars {
+			b.WriteString(fmt.Sprintf("... (showing %d of %d lines)", i, len(lines)))
+			break
+		}
+		b.WriteString(s)
+	}
+	return b.String()
+}
+
+// findFuzzyMatch tries to find old_string in content after normalizing trailing whitespace.
+// Returns the actual (unnormalized) text from the file and its starting line number.
+// Returns ("", 0) if no unique normalized match is found.
+func findFuzzyMatch(content, oldStr string) (string, int) {
+	// Normalize both sides: trim trailing whitespace from each line
+	normalizeLines := func(s string) string {
+		lines := strings.Split(s, "\n")
+		for i, line := range lines {
+			lines[i] = strings.TrimRight(line, " \t\r")
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	normalizedOld := normalizeLines(oldStr)
+	normalizedContent := normalizeLines(content)
+
+	// If normalization doesn't change either string, whitespace isn't the issue
+	if normalizedOld == oldStr && normalizedContent == content {
+		return "", 0
+	}
+
+	// Count normalized matches
+	count := strings.Count(normalizedContent, normalizedOld)
+	if count != 1 {
+		return "", 0
+	}
+
+	// Find position in normalized content
+	normIdx := strings.Index(normalizedContent, normalizedOld)
+	if normIdx < 0 {
+		return "", 0
+	}
+
+	// Map normalized position back to original content.
+	// The line number of the match start in normalized content
+	// equals the line number in original content.
+	normPrefix := normalizedContent[:normIdx]
+	startLine := strings.Count(normPrefix, "\n")
+
+	// Count how many lines the old_string spans
+	oldLines := strings.Count(normalizedOld, "\n")
+	endLine := startLine + oldLines
+
+	// Extract the original lines
+	contentLines := strings.Split(content, "\n")
+	if startLine >= len(contentLines) {
+		return "", 0
+	}
+	if endLine >= len(contentLines) {
+		endLine = len(contentLines) - 1
+	}
+
+	actual := strings.Join(contentLines[startLine:endLine+1], "\n")
+	return actual, startLine + 1 // 1-indexed line number
 }

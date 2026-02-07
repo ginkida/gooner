@@ -17,6 +17,7 @@ import (
 	"gokin/internal/client"
 	"gokin/internal/commands"
 	"gokin/internal/config"
+	"gokin/internal/git"
 	appcontext "gokin/internal/context"
 	"gokin/internal/hooks"
 	"gokin/internal/logging"
@@ -1077,7 +1078,38 @@ func (a *App) buildModelEnhancement() string {
 		return "\n\n**Flash Model Note:** Keep responses detailed with specific file:line references despite speed optimizations."
 	}
 
+	// Ollama models: per-model prompting + tool calling fallback
+	if a.config.API.Backend == "ollama" {
+		var enhancement string
+
+		// Add per-model prompt enhancement based on model profile
+		enhancement += client.ModelPromptEnhancement(modelName)
+
+		// Add tool calling fallback prompt for models without native tool support
+		profile := client.GetModelProfile(modelName)
+		if !profile.SupportsTools {
+			// Use only the filtered tool set (same as selectToolSets in builder)
+			decls := a.getActiveToolDeclarations()
+			enhancement += client.ToolCallFallbackPrompt(decls)
+		}
+
+		return enhancement
+	}
+
 	return ""
+}
+
+// getActiveToolDeclarations returns declarations for the tools actually available
+// to the current model (matching selectToolSets logic in builder).
+func (a *App) getActiveToolDeclarations() []*genai.FunctionDeclaration {
+	if a.config.API.Backend == "ollama" {
+		sets := []tools.ToolSet{tools.ToolSetOllamaCore}
+		if git.IsGitRepo(a.workDir) {
+			sets = append(sets, tools.ToolSetGit)
+		}
+		return a.registry.FilteredDeclarations(sets...)
+	}
+	return a.registry.Declarations()
 }
 
 // handleApplyCodeBlock is in app_handlers.go

@@ -80,11 +80,9 @@ var ToolIcons = map[string]string{
 	"git_commit":     "⎇",
 	"git_status":     "⎇",
 	"commit":         "⎇",
-	"undo":           "↩",
 	"redo":           "↪",
 	"memory":         "◈",
 	"memorize":       "◈",
-	"pattern_search": "⊙",
 	"refactor":       "△",
 	"code_graph":     "◈",
 	"batch":          "▪",
@@ -128,7 +126,6 @@ func GetToolIconColor(toolName string) lipgloss.Color {
 		"git_blame":      ColorSecondary, // Cyan - attribution
 		"commit":         ColorSuccess,   // Green - save
 		"memory":         ColorGradient1, // Purple - storage
-		"pattern_search": ColorInfo,      // Teal - patterns
 		"refactor":       ColorWarning,   // Amber - transformation
 		"code_graph":     ColorGradient3, // Sky - visualization
 		"batch":          ColorAccent,    // Pink - bulk
@@ -332,8 +329,8 @@ func DefaultStyles() *Styles {
 
 		// Markdown styles
 		InlineCode: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#94A3B8")). // Slate 400 - muted blue-gray
-			Background(lipgloss.Color("#1E293B")). // Slate 800 - subtle contrast
+			Foreground(ColorHighlight).
+			Background(ColorBorder).
 			Padding(0, 1),
 
 		// Code block styles

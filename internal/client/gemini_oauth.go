@@ -40,6 +40,7 @@ type GeminiOAuthClient struct {
 
 	statusCallback    StatusCallback
 	systemInstruction string
+	thinkingBudget    int32
 
 	mu sync.RWMutex
 }
@@ -164,6 +165,13 @@ func (c *GeminiOAuthClient) SetSystemInstruction(instruction string) {
 	c.systemInstruction = instruction
 }
 
+// SetThinkingBudget configures the thinking/reasoning budget.
+func (c *GeminiOAuthClient) SetThinkingBudget(budget int32) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.thinkingBudget = budget
+}
+
 // SetTools sets the tools available for function calling
 func (c *GeminiOAuthClient) SetTools(tools []*genai.Tool) {
 	c.tools = tools
@@ -271,6 +279,7 @@ func (c *GeminiOAuthClient) WithModel(modelName string) Client {
 		genConfig:         c.genConfig,
 		statusCallback:    c.statusCallback,
 		systemInstruction: c.systemInstruction,
+		thinkingBudget:    c.thinkingBudget,
 	}
 }
 
@@ -500,9 +509,10 @@ func (c *GeminiOAuthClient) buildRequest(contents []*genai.Content) map[string]i
 		"contents": apiContents,
 	}
 
-	// Add system instruction if set
+	// Add system instruction and thinking budget if set
 	c.mu.RLock()
 	sysInstruction := c.systemInstruction
+	thinkingBudget := c.thinkingBudget
 	c.mu.RUnlock()
 	if sysInstruction != "" {
 		requestPayload["systemInstruction"] = map[string]interface{}{
@@ -520,6 +530,12 @@ func (c *GeminiOAuthClient) buildRequest(contents []*genai.Content) map[string]i
 		}
 		if c.genConfig.MaxOutputTokens > 0 {
 			genConfig["maxOutputTokens"] = c.genConfig.MaxOutputTokens
+		}
+		if thinkingBudget > 0 {
+			genConfig["thinkingConfig"] = map[string]interface{}{
+				"includeThoughts": true,
+				"thinkingBudget":  thinkingBudget,
+			}
 		}
 		if len(genConfig) > 0 {
 			requestPayload["generationConfig"] = genConfig
@@ -636,6 +652,7 @@ func (c *GeminiOAuthClient) parseSSEData(data string) (ResponseChunk, error) {
 					Role  string `json:"role"`
 					Parts []struct {
 						Text         string `json:"text,omitempty"`
+						Thought      bool   `json:"thought,omitempty"`
 						FunctionCall *struct {
 							Name string                 `json:"name"`
 							Args map[string]interface{} `json:"args"`
@@ -667,6 +684,7 @@ func (c *GeminiOAuthClient) parseSSEData(data string) (ResponseChunk, error) {
 					Role  string `json:"role"`
 					Parts []struct {
 						Text         string `json:"text,omitempty"`
+						Thought      bool   `json:"thought,omitempty"`
 						FunctionCall *struct {
 							Name string                 `json:"name"`
 							Args map[string]interface{} `json:"args"`
@@ -694,6 +712,10 @@ func (c *GeminiOAuthClient) parseSSEData(data string) (ResponseChunk, error) {
 			}
 
 			for _, part := range candidate.Content.Parts {
+				if part.Thought {
+					chunk.Thinking += part.Text
+					continue
+				}
 				if part.Text != "" {
 					chunk.Text += part.Text
 					chunk.Parts = append(chunk.Parts, genai.NewPartFromText(part.Text))
@@ -731,6 +753,10 @@ func (c *GeminiOAuthClient) parseSSEData(data string) (ResponseChunk, error) {
 	}
 
 	for _, part := range candidate.Content.Parts {
+		if part.Thought {
+			chunk.Thinking += part.Text
+			continue
+		}
 		if part.Text != "" {
 			chunk.Text += part.Text
 			chunk.Parts = append(chunk.Parts, genai.NewPartFromText(part.Text))

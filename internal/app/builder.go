@@ -272,7 +272,17 @@ func (b *Builder) validateOllamaModel() error {
 
 	available, err := ollamaClient.IsModelAvailable(ctx, modelName)
 	if err != nil {
-		// Server unavailable — skip validation, error will appear later
+		errStr := err.Error()
+		if strings.Contains(errStr, "connection refused") || strings.Contains(errStr, "no such host") {
+			fmt.Fprintf(os.Stderr, "\n⚠ Ollama server is not running.\n\n")
+			fmt.Fprintf(os.Stderr, "  Start it with: ollama serve\n")
+			fmt.Fprintf(os.Stderr, "  Then restart gokin.\n\n")
+			baseURL := b.cfg.API.OllamaBaseURL
+			if baseURL == "" {
+				baseURL = "http://localhost:11434"
+			}
+			return fmt.Errorf("Ollama server not running at %s", baseURL)
+		}
 		logging.Debug("ollama healthcheck failed, skipping model validation", "error", err)
 		return nil
 	}
@@ -302,7 +312,15 @@ func (b *Builder) promptModelPull(c *client.OllamaClient, modelName string) erro
 
 	err := c.PullModel(b.ctx, modelName, func(p client.PullProgress) {
 		if p.Total > 0 {
-			fmt.Printf("\r  %s: %.1f%%    ", p.Status, p.Percent)
+			completedMB := float64(p.Completed) / (1024 * 1024)
+			totalMB := float64(p.Total) / (1024 * 1024)
+			if totalMB >= 1024 {
+				fmt.Printf("\r  %s: %.1f%% (%.1fGB/%.1fGB)    ",
+					p.Status, p.Percent, completedMB/1024, totalMB/1024)
+			} else {
+				fmt.Printf("\r  %s: %.1f%% (%.0fMB/%.0fMB)    ",
+					p.Status, p.Percent, completedMB, totalMB)
+			}
 		} else {
 			fmt.Printf("\r  %s...    ", p.Status)
 		}
@@ -340,7 +358,10 @@ func (b *Builder) initClient() error {
 // initTools creates the tool registry and executor.
 func (b *Builder) initTools() error {
 	b.registry = tools.DefaultRegistry(b.workDir)
-	b.geminiClient.SetTools(b.registry.GeminiTools())
+
+	// Dynamic tool filtering: select tool sets based on context
+	geminiTools := b.selectToolSets()
+	b.geminiClient.SetTools(geminiTools)
 
 	b.executor = tools.NewExecutor(b.registry, b.geminiClient, b.cfg.Tools.Timeout)
 	compactor := appcontext.NewResultCompactor(b.cfg.Context.ToolResultMaxChars)
@@ -350,6 +371,51 @@ func (b *Builder) initTools() error {
 	b.executor.SetToolCache(toolCache)
 
 	return nil
+}
+
+// selectToolSets determines which tool sets to include based on the current context.
+func (b *Builder) selectToolSets() []*genai.Tool {
+	// For Ollama models, use a reduced tool set
+	if b.cfg.API.Backend == "ollama" {
+		sets := []tools.ToolSet{tools.ToolSetOllamaCore}
+
+		// Add git tools if we're in a git repository
+		if b.isInGitRepo() {
+			sets = append(sets, tools.ToolSetGit)
+		}
+
+		logging.Debug("ollama tool filtering",
+			"sets", fmt.Sprintf("%v", sets),
+			"total_tools", len(b.registry.FilteredDeclarations(sets...)))
+		return b.registry.FilteredGeminiTools(sets...)
+	}
+
+	// For cloud models: base tool sets
+	// Router will override per-request via SetTools in Execute()
+	sets := []tools.ToolSet{
+		tools.ToolSetCore,
+		tools.ToolSetFileOps,
+		tools.ToolSetWeb,
+	}
+
+	// Add git tools if we're in a git repository
+	if b.isInGitRepo() {
+		sets = append(sets, tools.ToolSetGit)
+	}
+
+	// Include remaining sets as fallback for non-routed code paths
+	sets = append(sets, tools.ToolSetPlanning, tools.ToolSetAgent,
+		tools.ToolSetAdvanced, tools.ToolSetMemory)
+
+	logging.Debug("tool filtering",
+		"sets", fmt.Sprintf("%v", sets),
+		"total_tools", len(b.registry.FilteredDeclarations(sets...)))
+	return b.registry.FilteredGeminiTools(sets...)
+}
+
+// isInGitRepo checks if the working directory is inside a git repository.
+func (b *Builder) isInGitRepo() bool {
+	return git.IsGitRepo(b.workDir)
 }
 
 // initSession creates the chat session and context management.
@@ -476,7 +542,7 @@ func (b *Builder) initManagers() error {
 		DecomposeThreshold: 4,
 		ParallelThreshold:  7,
 	}
-	b.taskRouter = router.NewRouter(routerCfg, b.executor, b.agentRunner, b.geminiClient, b.workDir)
+	b.taskRouter = router.NewRouter(routerCfg, b.executor, b.agentRunner, b.geminiClient, b.registry, b.isInGitRepo(), b.workDir)
 
 	// Wire plan manager to router for plan-aware routing
 	// When a plan is active, router avoids nested decomposition
@@ -727,11 +793,6 @@ func (b *Builder) initIntegrations() error {
 			et.SetUndoManager(b.undoManager)
 		}
 	}
-	if undoTool, ok := b.registry.Get("undo"); ok {
-		if ut, ok := undoTool.(*tools.UndoTool); ok {
-			ut.SetManager(b.undoManager)
-		}
-	}
 	if batchTool, ok := b.registry.Get("batch"); ok {
 		if bt, ok := batchTool.(*tools.BatchTool); ok {
 			bt.SetUndoManager(b.undoManager)
@@ -956,9 +1017,6 @@ func (b *Builder) initIntegrations() error {
 			})
 
 			b.registry.Register(tools.NewSemanticSearchTool(b.semanticIdx, b.workDir, b.cfg.Semantic.TopK))
-
-			// Register semantic cleanup tool
-			b.registry.Register(tools.NewSemanticCleanupTool(b.configDir, b.cfg.Semantic.CacheTTL))
 
 			logging.Debug("semantic search initialized with per-project storage",
 				"project", b.workDir,

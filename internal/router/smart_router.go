@@ -76,7 +76,7 @@ func NewSmartRouter(cfg *SmartRouterConfig, executor *tools.Executor, agentRunne
 		cfg = DefaultSmartRouterConfig()
 	}
 
-	baseRouter := NewRouter(cfg.RouterConfig, executor, agentRunner, c, workDir)
+	baseRouter := NewRouter(cfg.RouterConfig, executor, agentRunner, c, nil, false, workDir)
 
 	return &SmartRouter{
 		Router:          baseRouter,

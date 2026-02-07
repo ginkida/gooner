@@ -142,7 +142,8 @@ func (m Model) renderStatusBarMedium() string {
 
 	// Mode indicator (plan mode only — it's the one that changes behavior)
 	if m.planningModeEnabled {
-		leftParts = append(leftParts, dimStyle.Render("PLAN"))
+		planStyle := lipgloss.NewStyle().Foreground(ColorWarning).Bold(true)
+		leftParts = append(leftParts, planStyle.Render("PLAN"))
 	}
 
 	if !m.mouseEnabled {
@@ -156,8 +157,15 @@ func (m Model) renderStatusBarMedium() string {
 
 	left := strings.Join(leftParts, " · ")
 
-	padding := safePadding(m.width, lipgloss.Width(left), 0)
-	return left + strings.Repeat(" ", padding)
+	// Scroll indicator on the right
+	var right string
+	if !m.output.IsAtBottom() {
+		scrollStyle := lipgloss.NewStyle().Foreground(ColorDim)
+		right = scrollStyle.Render(fmt.Sprintf("↑ %d%%", m.output.ScrollPercent()))
+	}
+
+	padding := safePadding(m.width, lipgloss.Width(left), lipgloss.Width(right))
+	return left + strings.Repeat(" ", padding) + right
 }
 
 // renderStatusBarFull renders the full status bar for wide terminals (>= 120 chars).
@@ -195,7 +203,8 @@ func (m Model) renderStatusBarFull() string {
 
 	// Plan mode
 	if m.planningModeEnabled {
-		leftParts = append(leftParts, dimStyle.Render("PLAN"))
+		planStyle := lipgloss.NewStyle().Foreground(ColorWarning).Bold(true)
+		leftParts = append(leftParts, planStyle.Render("PLAN"))
 	}
 
 	if !m.mouseEnabled {
@@ -213,6 +222,12 @@ func (m Model) renderStatusBarFull() string {
 	if m.retryAttempt > 0 && m.retryMax > 0 {
 		retryStyle := lipgloss.NewStyle().Foreground(ColorWarning)
 		rightParts = append(rightParts, retryStyle.Render(fmt.Sprintf("↻ %d/%d", m.retryAttempt, m.retryMax)))
+	}
+
+	// Scroll indicator
+	if !m.output.IsAtBottom() {
+		scrollStyle := lipgloss.NewStyle().Foreground(ColorDim)
+		rightParts = append(rightParts, scrollStyle.Render(fmt.Sprintf("↑ %d%%", m.output.ScrollPercent())))
 	}
 
 	// MCP health (only when unhealthy)

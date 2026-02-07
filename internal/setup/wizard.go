@@ -77,12 +77,89 @@ Choose your AI provider to get started.
 // Spinner animation frames
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
+// detectEnvAPIKeys checks for API key environment variables and returns the first found.
+// Returns (envVarName, backend, apiKey) or empty strings if none found.
+func detectEnvAPIKeys() (string, string, string) {
+	envKeys := []struct {
+		envVar  string
+		backend string
+	}{
+		{"GOKIN_API_KEY", "gemini"},
+		{"GEMINI_API_KEY", "gemini"},
+		{"ANTHROPIC_API_KEY", "anthropic"},
+		{"DEEPSEEK_API_KEY", "deepseek"},
+	}
+
+	for _, ek := range envKeys {
+		if key := os.Getenv(ek.envVar); key != "" {
+			return ek.envVar, ek.backend, key
+		}
+	}
+	return "", "", ""
+}
+
 // RunSetupWizard runs the enhanced first-time setup wizard.
 func RunSetupWizard() error {
 	// Print colorful welcome message
 	fmt.Printf(welcomeMessage, colorCyan, colorBold, colorCyan, colorReset)
 
 	reader := bufio.NewReader(os.Stdin)
+
+	// Check for existing env var API keys
+	if envVar, backend, apiKey := detectEnvAPIKeys(); envVar != "" {
+		fmt.Printf("\n%s✓ Found %s in environment.%s\n", colorGreen, envVar, colorReset)
+		fmt.Printf("%sUse it for setup? [Y/n]:%s ", colorCyan, colorReset)
+
+		answer, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("error reading input: %w", err)
+		}
+
+		answer = strings.TrimSpace(strings.ToLower(answer))
+		if answer == "" || answer == "y" || answer == "yes" {
+			// Validate the key
+			done := make(chan bool)
+			var validationErr error
+			go func() {
+				validationErr = validateAPIKeyReal(backend, apiKey)
+				done <- true
+			}()
+			spin("Validating API key...", done)
+
+			if validationErr != nil {
+				fmt.Printf("\n%s⚠ Key validation failed: %s%s\n", colorRed, validationErr, colorReset)
+				fmt.Printf("%sContinuing with manual setup...%s\n\n", colorYellow, colorReset)
+			} else {
+				// Save to config
+				configPath, err := getConfigPath()
+				if err != nil {
+					return fmt.Errorf("failed to get config path: %w", err)
+				}
+
+				if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+					return fmt.Errorf("failed to create directory: %w", err)
+				}
+
+				defaultModel := "gemini-3-flash-preview"
+				switch backend {
+				case "deepseek":
+					defaultModel = "deepseek-chat"
+				case "anthropic":
+					defaultModel = "claude-sonnet-4-5-20250929"
+				}
+
+				content := fmt.Sprintf("api:\n  api_key: %s\n  backend: %s\nmodel:\n  provider: %s\n  name: %s\n", apiKey, backend, backend, defaultModel)
+				if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
+					return fmt.Errorf("failed to save config: %w", err)
+				}
+
+				fmt.Printf("\n%s✓ Configured with %s!%s\n", colorGreen, envVar, colorReset)
+				fmt.Printf("  %sConfig:%s %s\n", colorYellow, colorReset, configPath)
+				showNextSteps()
+				return nil
+			}
+		}
+	}
 
 	for {
 		fmt.Printf(authChoiceMessage, colorYellow, colorReset, colorGreen, colorReset, colorGreen, colorReset, colorGreen, colorReset, colorGreen, colorReset, colorGreen, colorReset, colorCyan, colorReset)
@@ -139,13 +216,18 @@ func setupAPIKey(reader *bufio.Reader, backend string) error {
 		return fmt.Errorf("invalid API key format (too short)")
 	}
 
-	// Show loading spinner
+	// Validate API key with a real API call
 	done := make(chan bool)
+	var validationErr error
 	go func() {
-		time.Sleep(500 * time.Millisecond)
+		validationErr = validateAPIKeyReal(backend, apiKey)
 		done <- true
 	}()
 	spin("Validating API key...", done)
+
+	if validationErr != nil {
+		return fmt.Errorf("API key validation failed: %w", validationErr)
+	}
 
 	// Save to config
 	configPath, err := getConfigPath()
@@ -594,4 +676,57 @@ func detectInstalledOllamaModels(serverURL string) ([]string, error) {
 		models = append(models, m.Name)
 	}
 	return models, nil
+}
+
+// validateAPIKeyReal tests an API key by making a lightweight API call.
+func validateAPIKeyReal(backend, apiKey string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	switch backend {
+	case "gemini":
+		// Test with Gemini models.list endpoint
+		req, err := http.NewRequestWithContext(ctx, "GET",
+			"https://generativelanguage.googleapis.com/v1beta/models?key="+apiKey, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("connection error: %w", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode == 401 || resp.StatusCode == 403 {
+			return fmt.Errorf("invalid API key (HTTP %d)", resp.StatusCode)
+		}
+		if resp.StatusCode != 200 {
+			return fmt.Errorf("unexpected response (HTTP %d)", resp.StatusCode)
+		}
+		return nil
+
+	case "deepseek":
+		// Test with DeepSeek models endpoint
+		req, err := http.NewRequestWithContext(ctx, "GET",
+			"https://api.deepseek.com/models", nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("connection error: %w", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode == 401 || resp.StatusCode == 403 {
+			return fmt.Errorf("invalid API key (HTTP %d)", resp.StatusCode)
+		}
+		return nil
+
+	default:
+		// For unknown backends, just check key length
+		if len(apiKey) < 20 {
+			return fmt.Errorf("API key seems too short for %s", backend)
+		}
+		return nil
+	}
 }

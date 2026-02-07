@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -273,11 +274,7 @@ func ClassifyError(err error, context string) *EnhancedError {
 
 	case containsAny(errStr, "unauthorized", "401", "invalid.*key", "api.*key.*invalid"):
 		enhanced.Category = ErrorCategoryAuth
-		enhanced.Suggestions = []string{
-			"Verify your API key is correct",
-			"Check if the API key has expired",
-			"Run 'gokin --setup' to reconfigure credentials",
-		}
+		enhanced.Suggestions = getAuthSuggestions()
 		enhanced.Documentation = "https://ai.google.dev/tutorials/setup"
 
 	case containsAny(errStr, "rate limit", "429", "too many requests", "quota"):
@@ -374,6 +371,37 @@ func containsAny(s string, substrs ...string) bool {
 		}
 	}
 	return false
+}
+
+// getAuthSuggestions returns auth error suggestions with env var detection.
+func getAuthSuggestions() []string {
+	suggestions := []string{}
+
+	envKeys := map[string]string{
+		"GEMINI_API_KEY":    "Gemini",
+		"ANTHROPIC_API_KEY": "Anthropic",
+		"DEEPSEEK_API_KEY":  "DeepSeek",
+		"GOKIN_API_KEY":     "Gokin",
+	}
+
+	found := false
+	for envVar, name := range envKeys {
+		if os.Getenv(envVar) != "" {
+			suggestions = append(suggestions, fmt.Sprintf("Found %s (%s) — verify it is valid", envVar, name))
+			found = true
+		}
+	}
+
+	if !found {
+		suggestions = append(suggestions, "No API key env vars detected. Set GEMINI_API_KEY or run gokin --setup")
+	}
+
+	suggestions = append(suggestions,
+		"Check if the API key has expired",
+		"Run 'gokin --setup' to reconfigure credentials",
+	)
+
+	return suggestions
 }
 
 // FormatEnhancedError formats an enhanced error for display using the given styles.

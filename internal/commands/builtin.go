@@ -351,34 +351,6 @@ func (c *SessionsCommand) Execute(ctx context.Context, args []string, app AppInt
 	return sb.String(), nil
 }
 
-// UndoCommand undoes the last file change.
-type UndoCommand struct{}
-
-func (c *UndoCommand) Name() string        { return "undo" }
-func (c *UndoCommand) Description() string { return "Undo the last file change" }
-func (c *UndoCommand) Usage() string       { return "/undo" }
-func (c *UndoCommand) GetMetadata() CommandMetadata {
-	return CommandMetadata{
-		Category: CategorySession,
-		Icon:     "undo",
-		Priority: 0,
-	}
-}
-
-func (c *UndoCommand) Execute(ctx context.Context, args []string, app AppInterface) (string, error) {
-	um := app.GetUndoManager()
-	if um == nil {
-		return "Undo manager not available.", nil
-	}
-
-	change, err := um.Undo()
-	if err != nil {
-		return fmt.Sprintf("Undo failed: %v", err), nil
-	}
-
-	return fmt.Sprintf("Undone change to: %s", change.FilePath), nil
-}
-
 // InitCommand initializes GOKIN.md for the project.
 type InitCommand struct{}
 
