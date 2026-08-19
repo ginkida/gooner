@@ -138,12 +138,24 @@ func (t *DeleteTool) Execute(ctx context.Context, args map[string]any) (ToolResu
 	// we degrade gracefully: undo simply won't be recorded for this file. Log so
 	// the user has a clue if /undo later seems to "skip" the deletion.
 	var oldContent []byte
-	if !info.IsDir() {
-		var readErr error
-		oldContent, readErr = os.ReadFile(path)
-		if readErr != nil {
-			logging.Warn("delete: undo unavailable, pre-delete read failed",
-				"path", path, "error", readErr)
+	snapshotSkipped := false
+	if !info.IsDir() && t.undoManager != nil {
+		// The pre-read exists ONLY to make the delete undoable, and the undo
+		// stack is memory-resident and bounded by a change COUNT, not by bytes.
+		// Reading an arbitrarily large file here would pin it in RAM for the
+		// rest of the session — a streamed 4GB delete must not become a 4GB
+		// allocation. Decline the snapshot and say so instead.
+		if undoSnapshotTooLarge(info.Size()) {
+			snapshotSkipped = true
+			logging.Warn("delete: undo unavailable, file exceeds the undo snapshot limit",
+				"path", path, "size", info.Size(), "limit", maxUndoSnapshotBytes)
+		} else {
+			var readErr error
+			oldContent, readErr = os.ReadFile(path)
+			if readErr != nil {
+				logging.Warn("delete: undo unavailable, pre-delete read failed",
+					"path", path, "error", readErr)
+			}
 		}
 	}
 
@@ -189,8 +201,14 @@ func (t *DeleteTool) Execute(ctx context.Context, args map[string]any) (ToolResu
 			},
 		), nil
 	}
+	deleted := fmt.Sprintf("Deleted file: %s", path)
+	if snapshotSkipped {
+		// Same honesty rule as the directory branch above: never let the user
+		// believe /undo can bring back something that was never snapshotted.
+		deleted += " (" + undoSnapshotSkippedNote(info.Size()) + ")"
+	}
 	return NewSuccessResultWithData(
-		fmt.Sprintf("Deleted file: %s", path),
+		deleted,
 		map[string]any{"changed": true, "written_paths": []string{path}},
 	), nil
 }

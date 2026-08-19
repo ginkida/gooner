@@ -257,9 +257,14 @@ type BatchResult struct {
 	// rename), which aren't real paths — RawPaths feeds written_paths so the
 	// done-gate and read-dedup see the true set. Populated on real writes
 	// only (never dry-run).
-	RawPaths    []string
-	TotalFiles  int
-	Description string
+	RawPaths []string
+	// Unsnapshotted lists files that were deleted but whose content was too
+	// large to hold in the memory-resident undo stack. They are NOT undoable
+	// and the summary says so — a batch the user believes is reversible but
+	// partly is not is worse than one that discloses the gap.
+	Unsnapshotted []string
+	TotalFiles    int
+	Description   string
 }
 
 // matchFiles matches files using glob pattern.
@@ -486,15 +491,26 @@ func (t *BatchTool) executeDelete(ctx context.Context, files []string, dryRun, p
 		// can't abort a batch — but log so the user has a clue why /undo "skips".
 		var oldContent []byte
 		var oldMode os.FileMode
+		oversized := false
 		if !dryRun && t.undoManager != nil {
-			var readErr error
-			oldContent, readErr = os.ReadFile(path)
-			if readErr != nil {
-				logging.Warn("batch_delete: undo unavailable, pre-delete read failed",
-					"path", path, "error", readErr)
-			}
-			if info, stErr := os.Stat(path); stErr == nil {
+			info, stErr := os.Stat(path)
+			if stErr == nil {
 				oldMode = info.Mode().Perm()
+			}
+			// The pre-read exists only to make the deletion undoable, and a
+			// batch multiplies it across every matched file — an unbounded read
+			// here can pin a whole directory of large files in memory at once.
+			if stErr == nil && undoSnapshotTooLarge(info.Size()) {
+				oversized = true
+				logging.Warn("batch_delete: undo unavailable, file exceeds the undo snapshot limit",
+					"path", path, "size", info.Size(), "limit", maxUndoSnapshotBytes)
+			} else {
+				var readErr error
+				oldContent, readErr = os.ReadFile(path)
+				if readErr != nil {
+					logging.Warn("batch_delete: undo unavailable, pre-delete read failed",
+						"path", path, "error", readErr)
+				}
 			}
 		}
 
@@ -508,6 +524,9 @@ func (t *BatchTool) executeDelete(ctx context.Context, files []string, dryRun, p
 		} else {
 			result.Succeeded = append(result.Succeeded, path)
 			result.RawPaths = append(result.RawPaths, path)
+			if oversized {
+				result.Unsnapshotted = append(result.Unsnapshotted, path)
+			}
 
 			// Record for undo (nil means pre-read failed; []byte{} is a valid empty file).
 			if t.undoManager != nil && oldContent != nil {
@@ -651,6 +670,9 @@ func (t *BatchTool) formatResult(op string, result BatchResult, dryRun bool) Too
 	}
 	if len(result.Failed) > 0 {
 		fmt.Fprintf(&sb, "Failed: %d\n", len(result.Failed))
+	}
+	if len(result.Unsnapshotted) > 0 {
+		fmt.Fprintf(&sb, "Not undoable: %d (too large to snapshot for undo)\n", len(result.Unsnapshotted))
 	}
 
 	// Details for small result sets
