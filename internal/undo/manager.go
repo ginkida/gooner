@@ -626,6 +626,13 @@ func (m *Manager) revertChangeUnchecked(change *FileChange) error {
 		return revertMove(change)
 	}
 
+	// Mkdir is special: a parents=true creation may have brought several
+	// directories into existence while naming only the leaf, so the generic
+	// WasNew branch below would remove the leaf and leave the rest behind.
+	if change.Tool == "mkdir" {
+		return revertMkdir(change)
+	}
+
 	if change.WasNew {
 		// File was created - delete it
 		if err := os.Remove(change.FilePath); err != nil && !os.IsNotExist(err) {
@@ -642,6 +649,27 @@ func (m *Manager) revertChangeUnchecked(change *FileChange) error {
 	}
 
 	return fileutil.AtomicWrite(change.FilePath, change.OldContent, permOrDefault(change.Mode))
+}
+
+// revertMkdir removes the directory a mkdir created, then prunes the ancestor
+// directories the SAME call created, deepest-first. Ancestors are best-effort:
+// os.Remove refuses a non-empty directory, so anything that gained content
+// since the mkdir is left in place rather than deleted, and the climb stops
+// there because every remaining ancestor necessarily still holds it. Legacy
+// changes carry no CreatedDirs and degrade to the original leaf-only removal.
+func revertMkdir(change *FileChange) error {
+	if err := os.Remove(change.FilePath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, dir := range change.CreatedDirs {
+		if dir == change.FilePath {
+			continue
+		}
+		if err := os.Remove(dir); err != nil {
+			return nil
+		}
+	}
+	return nil
 }
 
 // permOrDefault returns the change's recorded original file mode, falling back

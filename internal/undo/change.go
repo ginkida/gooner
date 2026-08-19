@@ -18,6 +18,11 @@ type FileChange struct {
 	WasNew     bool        `json:"was_new"`            // file was created (didn't exist before)
 	GroupID    string      `json:"group_id,omitempty"` // Groups related changes for atomic undo
 	Mode       os.FileMode `json:"mode,omitempty"`     // original file perm to restore on undo/redo (0 → 0644 fallback)
+	// CreatedDirs lists every directory a "mkdir" actually brought into
+	// existence, deepest-first. A parents=true mkdir of a/b/c creates three
+	// directories but names only the leaf in FilePath, so an undo that
+	// removed FilePath alone left the intermediate ones behind.
+	CreatedDirs []string `json:"created_dirs,omitempty"`
 }
 
 // NewFileChange creates a new FileChange with a generated ID.

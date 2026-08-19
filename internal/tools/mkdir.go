@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"google.golang.org/genai"
@@ -119,6 +120,14 @@ func (t *MkdirTool) Execute(ctx context.Context, args map[string]any) (ToolResul
 		return NewErrorResult(fmt.Sprintf("path exists but is not a directory: %s", path)), nil
 	}
 
+	// Capture what this call is about to bring into existence BEFORE creating
+	// it. A parents=true MkdirAll of a/b/c creates three directories but the
+	// change record names only the leaf, so undo needs the intermediates too.
+	createdDirs := []string{path}
+	if parents {
+		createdDirs = missingDirChain(path)
+	}
+
 	// Create directory
 	if parents {
 		err = os.MkdirAll(path, mode)
@@ -135,8 +144,29 @@ func (t *MkdirTool) Execute(ctx context.Context, args map[string]any) (ToolResul
 	// We record as a "new file" with empty content so undo will attempt to remove it
 	if t.undoManager != nil {
 		change := undo.NewFileChange(path, "mkdir", nil, nil, true)
+		change.CreatedDirs = createdDirs
 		t.undoManager.Record(*change)
 	}
 
 	return NewSuccessResult(fmt.Sprintf("Created directory: %s", path)), nil
+}
+
+// missingDirChain returns path plus every ancestor directory that does not yet
+// exist, deepest-first — exactly the set os.MkdirAll is about to create. Only
+// a confirmed absence is claimed: any other stat error stops the climb so undo
+// never removes a directory this call did not make.
+func missingDirChain(path string) []string {
+	var chain []string
+	for current := path; ; {
+		if _, err := os.Stat(current); !os.IsNotExist(err) {
+			break
+		}
+		chain = append(chain, current)
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+	return chain
 }
