@@ -295,21 +295,43 @@ type ContextHealth struct {
 	PruningAlert      string
 }
 
+// contextHealthCountTimeout bounds the token count behind the health panel.
+// The panel is a readout; it is never worth stalling the turn that produced
+// the history it is describing. A var, not a const, so a test can shorten it
+// and prove the bound actually exists.
+var contextHealthCountTimeout = 5 * time.Second
+
 // GetContextHealth returns a snapshot of the agent's context health.
 func (a *Agent) GetContextHealth() ContextHealth {
+	// Snapshot under the lock, count OUTSIDE it. CountContents reaches the
+	// provider's count_tokens endpoint whenever the hash misses its cache,
+	// which is the normal case here because history grows every turn — and
+	// holding stateMu across a network call blocks the agent's own history
+	// append, since Go parks new readers behind a waiting writer. One slow
+	// count would stall the loop producing the very history being counted.
 	a.stateMu.RLock()
-	defer a.stateMu.RUnlock()
+	h := ContextHealth{MaxTokens: a.ctxCfg.MaxInputTokens}
+	counter := a.tokenCounter
+	tracker := a.fileTracker
+	history := make([]*genai.Content, len(a.history))
+	copy(history, a.history)
+	a.stateMu.RUnlock()
 
-	h := ContextHealth{
-		MaxTokens: a.ctxCfg.MaxInputTokens,
-	}
-
-	if a.tokenCounter != nil {
-		ctx := context.Background()
-		history := make([]*genai.Content, len(a.history))
-		copy(history, a.history)
-
-		usage, _ := a.tokenCounter.CountContents(ctx, history)
+	if counter != nil {
+		// This used to run on context.Background(): no deadline and no
+		// cancellation, on a path that fires from the live rate-limit response
+		// callback. Nothing else bounded it — the shared HTTP client carries no
+		// Client.Timeout on purpose, so SSE can stream.
+		ctx, cancel := context.WithTimeout(context.Background(), contextHealthCountTimeout)
+		usage, err := counter.CountContents(ctx, history)
+		cancel()
+		if err != nil {
+			// Degrade to the local estimate rather than to zero: a zero here is
+			// read downstream as "no data" and silently replaced by the MAIN
+			// session's numbers, so a timed-out sub-agent would be described by
+			// someone else's context.
+			usage = ctxmgr.EstimateContentsTokens(history)
+		}
 		h.TotalTokens = usage
 		if h.MaxTokens > 0 {
 			h.PercentUsed = float64(usage) / float64(h.MaxTokens)
@@ -322,8 +344,8 @@ func (a *Agent) GetContextHealth() ContextHealth {
 		}
 	}
 
-	if a.fileTracker != nil {
-		h.ActiveFiles = a.fileTracker.GetActiveFiles(10)
+	if tracker != nil {
+		h.ActiveFiles = tracker.GetActiveFiles(10)
 	}
 
 	return h
