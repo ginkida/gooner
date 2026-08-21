@@ -39,3 +39,18 @@ func humanByteSize(n int64) string {
 	}
 	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGT"[exp])
 }
+
+// undoSnapshotSkippedSuffix renders the trailing disclosure for an operation
+// that produced n files too large to snapshot, or "" when every file was
+// captured. A caller that declines snapshots MUST surface this — an operation
+// the user believes is reversible but partly is not is worse than one that
+// says up front that it cannot be taken back.
+func undoSnapshotSkippedSuffix(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if n == 1 {
+		return " (1 file too large to snapshot — that file is not undoable)"
+	}
+	return fmt.Sprintf(" (%d files too large to snapshot — those files are not undoable)", n)
+}

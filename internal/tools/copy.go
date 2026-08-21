@@ -10,6 +10,7 @@ import (
 
 	"google.golang.org/genai"
 
+	"gokin/internal/logging"
 	"gokin/internal/security"
 	"gokin/internal/undo"
 )
@@ -166,11 +167,26 @@ func (t *CopyTool) Execute(ctx context.Context, args map[string]any) (ToolResult
 	}
 
 	// Record for undo (we'll track the created destination for deletion on undo)
+	unsnapshotted := 0
 	if t.undoManager != nil && len(copiedPaths) > 0 {
 		// For undo, we record as a "new file" creation so undo will delete it
 		for _, p := range copiedPaths {
 			info, err := os.Stat(p)
 			if err == nil && !info.IsDir() {
+				// copyFile STREAMS through io.Copy, so the copy itself never
+				// holds the file. This read exists only so the memory-resident
+				// undo stack can restore it, and that stack is bounded by a
+				// change COUNT, not by bytes — reading without a ceiling would
+				// let a streamed multi-gigabyte copy become an equally large
+				// allocation held for the rest of the session. Declining is the
+				// mildest trade in this family: an unsnapshotted copy leaves an
+				// extra file behind, where an unsnapshotted delete loses one.
+				if undoSnapshotTooLarge(info.Size()) {
+					unsnapshotted++
+					logging.Warn("copy: undo unavailable, file exceeds the undo snapshot limit",
+						"path", p, "size", info.Size(), "limit", maxUndoSnapshotBytes)
+					continue
+				}
 				content, _ := os.ReadFile(p)
 				change := undo.NewFileChange(p, "copy", nil, content, true)
 				change.Mode = info.Mode().Perm()
@@ -181,7 +197,8 @@ func (t *CopyTool) Execute(ctx context.Context, args map[string]any) (ToolResult
 
 	if srcInfo.IsDir() {
 		return NewSuccessResultWithData(
-			fmt.Sprintf("Copied directory %s to %s (%d files)", source, dest, len(copiedPaths)),
+			fmt.Sprintf("Copied directory %s to %s (%d files)%s",
+				source, dest, len(copiedPaths), undoSnapshotSkippedSuffix(unsnapshotted)),
 			map[string]any{
 				"changed":           true,
 				"workspace_changed": true,
@@ -190,7 +207,7 @@ func (t *CopyTool) Execute(ctx context.Context, args map[string]any) (ToolResult
 		), nil
 	}
 	return NewSuccessResultWithData(
-		fmt.Sprintf("Copied %s to %s", source, dest),
+		fmt.Sprintf("Copied %s to %s%s", source, dest, undoSnapshotSkippedSuffix(unsnapshotted)),
 		map[string]any{"changed": true, "written_paths": copiedPaths},
 	), nil
 }

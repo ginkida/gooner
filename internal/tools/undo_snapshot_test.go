@@ -135,3 +135,116 @@ func TestBatchDeleteDisclosesUnsnapshottedFiles(t *testing.T) {
 		t.Fatalf("undo did not restore the small file: %v", err)
 	}
 }
+
+// TestCopyLargeFileSkipsUndoSnapshotAndSaysSo pins the same ceiling on copy,
+// where the gap was starkest: copyFile streams through io.Copy, so gokin could
+// already copy a multi-gigabyte file without ever holding it — and then read
+// the whole result back into the undo stack.
+func TestCopyLargeFileSkipsUndoSnapshotAndSaysSo(t *testing.T) {
+	dir := testkit.ResolvedTempDir(t)
+	src := filepath.Join(dir, "src.bin")
+	dst := filepath.Join(dir, "dst.bin")
+	sparseFile(t, src, maxUndoSnapshotBytes+1)
+
+	mgr := undo.NewManager()
+	tool := NewCopyTool(dir)
+	tool.SetUndoManager(mgr)
+
+	res, err := tool.Execute(context.Background(), map[string]any{
+		"source":      src,
+		"destination": dst,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Success {
+		t.Fatalf("copy failed: %s", res.Content)
+	}
+	if _, err := os.Stat(dst); err != nil {
+		t.Fatalf("copy did not produce the destination: %v", err)
+	}
+	if !strings.Contains(res.Content, "not undoable") {
+		t.Errorf("copy must disclose the unsnapshotted file, got: %s", res.Content)
+	}
+	if n := mgr.Count(); n != 0 {
+		t.Errorf("expected no undo record for an unsnapshotted copy, got %d", n)
+	}
+}
+
+// TestCopyDirectoryRecordsOnlySnapshottableFiles covers the mixed tree: the
+// small file stays undoable, the large one is skipped and counted.
+func TestCopyDirectoryRecordsOnlySnapshottableFiles(t *testing.T) {
+	dir := testkit.ResolvedTempDir(t)
+	src := filepath.Join(dir, "tree")
+	if err := os.Mkdir(src, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sparseFile(t, filepath.Join(src, "big.bin"), maxUndoSnapshotBytes+1)
+	if err := os.WriteFile(filepath.Join(src, "small.txt"), []byte("precious"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "tree-copy")
+
+	mgr := undo.NewManager()
+	tool := NewCopyTool(dir)
+	tool.SetUndoManager(mgr)
+
+	res, err := tool.Execute(context.Background(), map[string]any{
+		"source":      src,
+		"destination": dst,
+		"recursive":   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Success {
+		t.Fatalf("copy failed: %s", res.Content)
+	}
+	if !strings.Contains(res.Content, "1 file too large to snapshot") {
+		t.Errorf("copy must disclose exactly one unsnapshotted file, got: %s", res.Content)
+	}
+	if n := mgr.Count(); n != 1 {
+		t.Fatalf("expected exactly 1 undo record (the small file), got %d", n)
+	}
+	if _, err := mgr.Undo(); err != nil {
+		t.Fatalf("undo failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "small.txt")); !os.IsNotExist(err) {
+		t.Error("undo did not remove the copied small file")
+	}
+}
+
+// TestCopySmallFileStaysUndoable is the companion: the ceiling must not cost
+// ordinary work its undo.
+func TestCopySmallFileStaysUndoable(t *testing.T) {
+	dir := testkit.ResolvedTempDir(t)
+	src := filepath.Join(dir, "src.txt")
+	dst := filepath.Join(dir, "dst.txt")
+	if err := os.WriteFile(src, []byte("precious"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := undo.NewManager()
+	tool := NewCopyTool(dir)
+	tool.SetUndoManager(mgr)
+
+	res, err := tool.Execute(context.Background(), map[string]any{
+		"source":      src,
+		"destination": dst,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Success {
+		t.Fatalf("copy failed: %s", res.Content)
+	}
+	if strings.Contains(res.Content, "not undoable") {
+		t.Errorf("a small copy must stay undoable, got: %s", res.Content)
+	}
+	if _, err := mgr.Undo(); err != nil {
+		t.Fatalf("undo failed: %v", err)
+	}
+	if _, err := os.Stat(dst); !os.IsNotExist(err) {
+		t.Error("undo did not remove the copied file")
+	}
+}
