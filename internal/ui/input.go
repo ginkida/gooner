@@ -363,8 +363,8 @@ func DefaultCommands() []CommandInfo {
 		// /undo and /redo are fundamental enough to be in Session autocomplete.
 		// Were missing pre-v0.78.14 — caught by TestEveryRegisteredCommandIsInAutocomplete.
 		{Name: "undo", Description: "Undo last file change(s)", Category: "Session",
-			Args:  []ArgInfo{{Name: "n_or_list", Required: false, Type: "string"}},
-			Usage: "/undo [N|list]"},
+			Args:  []ArgInfo{{Name: "n_or_all_or_list", Required: false, Type: "string"}},
+			Usage: "/undo [N|all|list]"},
 		{Name: "redo", Description: "Redo last undone change(s)", Category: "Session",
 			Args:  []ArgInfo{{Name: "n", Required: false, Type: "number"}},
 			Usage: "/redo [N]"},

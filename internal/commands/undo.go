@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	appcontext "gokin/internal/context"
+	"gokin/internal/undo"
 )
 
 // MaxUndoSteps caps how many changes /undo N will revert in one call. Prevents
@@ -20,6 +21,7 @@ func (c *UndoCommand) Name() string        { return "undo" }
 func (c *UndoCommand) Description() string { return "Undo last file change(s)" }
 func (c *UndoCommand) Usage() string {
 	return `/undo           - Undo last file change
+/undo all       - Undo every change the last request made, atomically
 /undo N         - Undo last N changes (max 20)
 /undo list      - Show recent undoable changes`
 }
@@ -29,8 +31,26 @@ func (c *UndoCommand) GetMetadata() CommandMetadata {
 		Icon:     "undo",
 		Priority: 70,
 		HasArgs:  true,
-		ArgHint:  "[N|list]",
+		ArgHint:  "[N|all|list]",
 	}
+}
+
+// remainingInRequest counts changes still on the stack that came from the same
+// request as the one just reverted. The message processor stamps a per-request
+// group on every change it records; until now nothing read it back, so a user
+// who asked for a five-file change had no way to learn that "/undo" had put
+// only one of them back.
+func remainingInRequest(mgr *undo.Manager, groupID string) int {
+	if groupID == "" {
+		return 0
+	}
+	n := 0
+	for _, change := range mgr.List() {
+		if change.GroupID == groupID {
+			n++
+		}
+	}
+	return n
 }
 
 func safeChangeSummary(summary string) string {
@@ -71,13 +91,36 @@ func (c *UndoCommand) Execute(ctx context.Context, args []string, app AppInterfa
 		return sb.String(), nil
 	}
 
+	// /undo all — revert everything the last request changed, as ONE
+	// transaction. The per-request group has been stamped on every change since
+	// the message processor started recording them, and the group path
+	// preflights the whole set before its first write and rolls back on
+	// failure — neither of which the /undo N loop below can do.
+	if len(args) > 0 && (strings.EqualFold(args[0], "all") || strings.EqualFold(args[0], "request")) {
+		changes, err := mgr.UndoLastGroup()
+		if err != nil {
+			return fmt.Sprintf("Undo: %s", safeUndoError(err)), nil
+		}
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Undone %d change(s) from the last request:\n", len(changes))
+		for i, change := range changes {
+			fmt.Fprintf(&sb, "  %d. %s\n", i+1, safeChangeSummary(change.Summary()))
+		}
+		if len(changes) == 1 {
+			sb.WriteString("Redo this change: /redo")
+		} else {
+			fmt.Fprintf(&sb, "Redo these changes: /redo %d", len(changes))
+		}
+		return sb.String(), nil
+	}
+
 	// /undo N — multi-step rewind. Stops at the first error and reports what
 	// was actually reverted so the user isn't left guessing the stack state.
 	steps := 1
 	if len(args) > 0 {
 		n, err := strconv.Atoi(args[0])
 		if err != nil || n < 1 {
-			return fmt.Sprintf("Invalid argument %q. Use /undo [N|list].", args[0]), nil
+			return fmt.Sprintf("Invalid argument %q. Use /undo [N|all|list].", args[0]), nil
 		}
 		if n > MaxUndoSteps {
 			return fmt.Sprintf("Max %d steps per /undo. Run again if you need more.", MaxUndoSteps), nil
@@ -90,7 +133,13 @@ func (c *UndoCommand) Execute(ctx context.Context, args []string, app AppInterfa
 		if err != nil {
 			return fmt.Sprintf("Undo: %s", safeUndoError(err)), nil
 		}
-		return fmt.Sprintf("Undone: %s\nRedo this change: /redo", safeChangeSummary(change.Summary())), nil
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Undone: %s\n", safeChangeSummary(change.Summary()))
+		if n := remainingInRequest(mgr, change.GroupID); n > 0 {
+			fmt.Fprintf(&sb, "%d more change(s) from that same request remain — /undo all reverts them together.\n", n)
+		}
+		sb.WriteString("Redo this change: /redo")
+		return sb.String(), nil
 	}
 
 	var reverted []string
