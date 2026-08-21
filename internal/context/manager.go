@@ -717,7 +717,7 @@ func (m *ContextManager) OptimizeContext(ctx context.Context) error {
 	m.syncTaskContext()
 
 	// Create summary plan using strategy
-	plan := CreateSummaryPlan(history, strategy, m.messageScorer)
+	plan := CreateSummaryPlanWithContext(ctx, history, strategy, m.messageScorer)
 
 	if len(plan.ToSummarize) == 0 {
 		// All messages are pinned or already-summarized. Surface so the

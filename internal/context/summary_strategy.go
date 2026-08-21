@@ -1,6 +1,7 @@
 package context
 
 import (
+	"context"
 	"google.golang.org/genai"
 )
 
@@ -85,8 +86,23 @@ type SummaryPlan struct {
 	Reason string
 }
 
-// CreateSummaryPlan creates a plan for summarizing messages based on strategy.
+// CreateSummaryPlan keeps the no-context signature for callers that have none;
+// it cannot cancel the semantic scoring an importance-scoring strategy may run.
+// Any caller holding a context — every compaction path does — must use
+// CreateSummaryPlanWithContext instead, the same split Router.Route keeps.
 func CreateSummaryPlan(
+	messages []*genai.Content,
+	strategy SummaryStrategy,
+	scorer *MessageScorer,
+) *SummaryPlan {
+	return CreateSummaryPlanWithContext(context.Background(), messages, strategy, scorer)
+}
+
+// CreateSummaryPlanWithContext creates a plan for summarizing messages based on
+// strategy. The context matters because importance scoring can call the model:
+// it carries both the caller's cancellation and its deadline down to that call.
+func CreateSummaryPlanWithContext(
+	ctx context.Context,
 	messages []*genai.Content,
 	strategy SummaryStrategy,
 	scorer *MessageScorer,
@@ -142,7 +158,7 @@ func CreateSummaryPlan(
 
 	// Apply importance scoring if enabled
 	if strategy.UseImportanceScoring && scorer != nil {
-		plan = refinePlanWithScoring(plan, messages, strategy, scorer)
+		plan = refinePlanWithScoring(ctx, plan, messages, strategy, scorer)
 	}
 
 	// Estimate savings (rough estimate)
@@ -153,13 +169,17 @@ func CreateSummaryPlan(
 
 // refinePlanWithScoring adjusts the summary plan based on message importance.
 func refinePlanWithScoring(
+	ctx context.Context,
 	plan *SummaryPlan,
 	messages []*genai.Content,
 	strategy SummaryStrategy,
 	scorer *MessageScorer,
 ) *SummaryPlan {
-	// Score the middle section
-	scores := scorer.ScoreMessages(plan.ToSummarize)
+	// Score the middle section. ScoreMessages would score on
+	// context.Background(), so a compaction the caller bounded at 60s could sit
+	// here for the full model-round cap and keep running after the user pressed
+	// Esc; the context form inherits both bounds.
+	scores := scorer.ScoreMessagesWithContext(ctx, plan.ToSummarize)
 
 	// Identify critical messages in the middle that should be kept. Tool
 	// exchanges are an atomic unit: a high-priority call (for example bash/edit)
