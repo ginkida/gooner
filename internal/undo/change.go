@@ -57,3 +57,25 @@ func (c *FileChange) Summary() string {
 func (c *FileChange) SizeChange() int {
 	return len(c.NewContent) - len(c.OldContent)
 }
+
+// MaxSnapshotBytes caps how much file content a SINGLE undo record may hold.
+// The undo stack lives entirely in memory — nothing in this package is
+// persisted — and Tracker bounds it by a COUNT of changes, never by bytes, so
+// an unbounded snapshot pins that many bytes for the rest of the session. The
+// ceiling sits alongside the repo's other read limits (10MB pdf/ipynb, 5MB
+// images) and is deliberately generous enough that ordinary source-tree work
+// stays fully undoable, while a dataset or a build artifact is refused.
+const MaxSnapshotBytes = 10 << 20 // 10MB
+
+// SnapshotTooLarge reports whether a change's two content sides together exceed
+// what one record may hold. Both sides count: an edit stores the file before
+// AND after, so the pinned cost is roughly twice the file.
+func SnapshotTooLarge(oldContent, newContent []byte) bool {
+	return SnapshotTooLargeLen(len(oldContent), len(newContent))
+}
+
+// SnapshotTooLargeLen is the same test over sizes alone, for callers that hold
+// the content as strings and must not copy it into byte slices just to ask.
+func SnapshotTooLargeLen(oldLen, newLen int) bool {
+	return oldLen+newLen > MaxSnapshotBytes
+}

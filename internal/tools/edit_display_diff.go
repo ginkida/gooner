@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	diffmatchpatch "github.com/sergi/go-diff/diffmatchpatch"
+
+	"gokin/internal/undo"
 )
 
 // Display-diff payload for edit results (the Claude-Code "Update(file) ⎿
@@ -47,6 +49,14 @@ func editDisplayData(oldContent, newContent string) map[string]any {
 // when one is worth showing — the single seam all five edit success paths
 // return through.
 func editSuccess(status, oldContent, newContent string) ToolResult {
+	// An edit stores the file before AND after, so its pinned cost is roughly
+	// twice the file and the undo stack refuses it past the ceiling. The read
+	// itself is unavoidable here — you cannot replace text you have not loaded
+	// — so only the record is declined, and this seam is where every one of the
+	// five success paths can say so exactly once.
+	if undo.SnapshotTooLargeLen(len(oldContent), len(newContent)) {
+		status += " (" + undoSnapshotDeclinedNote() + ")"
+	}
 	if d := editDisplayData(oldContent, newContent); d != nil {
 		return NewSuccessResultWithData(status, d)
 	}

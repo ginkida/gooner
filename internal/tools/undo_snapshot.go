@@ -1,15 +1,18 @@
 package tools
 
-import "fmt"
+import (
+	"fmt"
 
-// maxUndoSnapshotBytes caps how much file content a single undo record may hold
-// in memory. The undo stack lives entirely in RAM (nothing is persisted) and is
-// bounded only by a COUNT of changes, so a tool that snapshots an arbitrarily
-// large file to make its work undoable can pin that many bytes for the rest of
-// the session. Sitting alongside the repo's other read ceilings (10MB pdf/ipynb,
-// 5MB images), this keeps ordinary source-tree work fully undoable while
-// refusing to load a dataset or a build artifact into memory.
-const maxUndoSnapshotBytes = 10 << 20 // 10MB
+	"gokin/internal/undo"
+)
+
+// maxUndoSnapshotBytes is the ceiling on how much file content a single undo
+// record may hold. It belongs to the undo stack, not to any one tool, so it is
+// defined once in internal/undo and enforced there for every recorder. What
+// lives in this file is the tool-side half: gating a read that exists ONLY to
+// make a change undoable, so those bytes are never loaded in the first place,
+// and rendering the disclosure that keeps the decline honest.
+const maxUndoSnapshotBytes = undo.MaxSnapshotBytes
 
 // undoSnapshotTooLarge reports whether a file of this size may be snapshotted
 // for undo. Callers that decline a snapshot MUST say so in their result — an
@@ -53,4 +56,12 @@ func undoSnapshotSkippedSuffix(n int) string {
 		return " (1 file too large to snapshot — that file is not undoable)"
 	}
 	return fmt.Sprintf(" (%d files too large to snapshot — those files are not undoable)", n)
+}
+
+// undoSnapshotDeclinedNote is the disclosure for a change the undo stack
+// refused to hold. Used where the content had to be read for the operation
+// itself, so only the record could be declined.
+func undoSnapshotDeclinedNote() string {
+	return fmt.Sprintf("not undoable — content exceeds the %s undo snapshot limit",
+		humanByteSize(maxUndoSnapshotBytes))
 }

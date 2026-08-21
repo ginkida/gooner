@@ -205,11 +205,15 @@ func (t *WriteTool) Execute(ctx context.Context, args map[string]any) (ToolResul
 		return NewErrorResult(fmt.Sprintf("error writing file: %s", err)), nil
 	}
 
-	// Record change for undo
+	// Record change for undo. Unlike delete and copy, the old content is read
+	// for the operation itself — append concatenates it and the diff preview
+	// shows it — so the read cannot be skipped; only the RECORD is refused, and
+	// that is the half that would otherwise pin the bytes for the session.
+	snapshotDeclined := false
 	if t.undoManager != nil {
 		change := undo.NewFileChange(filePath, "write", oldContent, newContent, isNew)
 		change.Mode = perm
-		t.undoManager.Record(*change)
+		snapshotDeclined = !t.undoManager.Record(*change)
 	}
 
 	// Create status message
@@ -220,6 +224,10 @@ func (t *WriteTool) Execute(ctx context.Context, args map[string]any) (ToolResul
 		status = fmt.Sprintf("Created new file: %s (%d bytes)", filePath, len(content))
 	} else {
 		status = fmt.Sprintf("Updated file: %s (%d bytes)", filePath, len(content))
+	}
+
+	if snapshotDeclined {
+		status += " (" + undoSnapshotDeclinedNote() + ")"
 	}
 
 	// Emit FilePeek

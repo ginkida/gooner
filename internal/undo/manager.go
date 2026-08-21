@@ -66,7 +66,21 @@ func (m *Manager) ClearActiveGroup() {
 
 // Record records a new file change. If an active group is set, the change
 // is stamped with the group ID for later atomic undo via UndoGroup.
-func (m *Manager) Record(change FileChange) {
+func (m *Manager) Record(change FileChange) bool {
+	// The stack is memory-resident — nothing here is persisted — and Tracker
+	// bounds it by a COUNT of changes, so every record pins its content for the
+	// rest of the session. Declining oversized content at the root means no
+	// tool, present or future, can pin an unbounded snapshot by forgetting a
+	// guard of its own. Callers that can realistically produce such content
+	// check the return value and disclose it; the log is the backstop for the
+	// rest, because a snapshot that was never taken must never be silent.
+	if SnapshotTooLarge(change.OldContent, change.NewContent) {
+		logging.Warn("undo: change not recorded, content exceeds the snapshot limit",
+			"path", change.FilePath, "tool", change.Tool,
+			"bytes", len(change.OldContent)+len(change.NewContent), "limit", MaxSnapshotBytes)
+		return false
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -78,6 +92,7 @@ func (m *Manager) Record(change FileChange) {
 	m.undone = make([]FileChange, 0)
 	m.recordCount++
 	m.mutations++
+	return true
 }
 
 // Undo reverts the last change and returns information about it.

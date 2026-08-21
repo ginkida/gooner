@@ -248,3 +248,115 @@ func TestCopySmallFileStaysUndoable(t *testing.T) {
 		t.Error("undo did not remove the copied file")
 	}
 }
+
+// TestEditLargeFileDisclosesDeclinedSnapshot covers the last member of the
+// family, and the one shaped differently: edit MUST read the file to replace
+// text in it, so the read cannot be skipped the way delete's and copy's can.
+// Only the record is declined — that is the half that would otherwise pin
+// roughly twice the file for the rest of the session — and editSuccess, the
+// single seam all five success paths return through, is where it is disclosed.
+func TestEditLargeFileDisclosesDeclinedSnapshot(t *testing.T) {
+	dir := testkit.ResolvedTempDir(t)
+	path := filepath.Join(dir, "big.txt")
+	// Old + new together must clear the ceiling, so the file itself only needs
+	// to be past half of it.
+	body := strings.Repeat("abcdefghij", (maxUndoSnapshotBytes/2/10)+1)
+	if err := os.WriteFile(path, []byte(body+"NEEDLE"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := undo.NewManager()
+	tool := NewEditTool(dir)
+	tool.SetUndoManager(mgr)
+
+	res, err := tool.Execute(context.Background(), map[string]any{
+		"file_path":  path,
+		"old_string": "NEEDLE",
+		"new_string": "FOUND",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Success {
+		t.Fatalf("edit failed: %s", res.Content)
+	}
+	// The edit itself must still happen — the ceiling governs undo, not work.
+	if b, err := os.ReadFile(path); err != nil || !strings.HasSuffix(string(b), "FOUND") {
+		t.Fatalf("edit did not apply: %v", err)
+	}
+	if !strings.Contains(res.Content, "not undoable") {
+		t.Errorf("edit must disclose the declined snapshot, got: %s", res.Content)
+	}
+	if n := mgr.Count(); n != 0 {
+		t.Errorf("expected no undo record past the ceiling, got %d", n)
+	}
+}
+
+// TestEditSmallFileStaysUndoable is the companion half.
+func TestEditSmallFileStaysUndoable(t *testing.T) {
+	dir := testkit.ResolvedTempDir(t)
+	path := filepath.Join(dir, "small.txt")
+	if err := os.WriteFile(path, []byte("hello NEEDLE"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := undo.NewManager()
+	tool := NewEditTool(dir)
+	tool.SetUndoManager(mgr)
+
+	res, err := tool.Execute(context.Background(), map[string]any{
+		"file_path":  path,
+		"old_string": "NEEDLE",
+		"new_string": "FOUND",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Success {
+		t.Fatalf("edit failed: %s", res.Content)
+	}
+	if strings.Contains(res.Content, "not undoable") {
+		t.Errorf("an ordinary edit must stay undoable, got: %s", res.Content)
+	}
+	if _, err := mgr.Undo(); err != nil {
+		t.Fatalf("undo failed: %v", err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != "hello NEEDLE" {
+		t.Errorf("undo did not restore the file, got %q", string(b))
+	}
+}
+
+// TestWriteOverLargeFileDisclosesDeclinedSnapshot: write reads the old content
+// for the operation itself (append concatenates it, the diff preview shows it),
+// so again only the record is refused.
+func TestWriteOverLargeFileDisclosesDeclinedSnapshot(t *testing.T) {
+	dir := testkit.ResolvedTempDir(t)
+	path := filepath.Join(dir, "big.txt")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", maxUndoSnapshotBytes+1)), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := undo.NewManager()
+	tool := NewWriteTool(dir)
+	tool.SetUndoManager(mgr)
+
+	res, err := tool.Execute(context.Background(), map[string]any{
+		"file_path": path,
+		"content":   "replaced",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Success {
+		t.Fatalf("write failed: %s", res.Content)
+	}
+	if b, err := os.ReadFile(path); err != nil || string(b) != "replaced" {
+		t.Fatalf("write did not apply: %v", err)
+	}
+	if !strings.Contains(res.Content, "not undoable") {
+		t.Errorf("write must disclose the declined snapshot, got: %s", res.Content)
+	}
+	if n := mgr.Count(); n != 0 {
+		t.Errorf("expected no undo record past the ceiling, got %d", n)
+	}
+}
