@@ -109,7 +109,7 @@ func (c *UndoCommand) Execute(ctx context.Context, args []string, app AppInterfa
 		if len(changes) == 1 {
 			sb.WriteString("Redo this change: /redo")
 		} else {
-			fmt.Fprintf(&sb, "Redo these changes: /redo %d", len(changes))
+			sb.WriteString("Redo the whole request: /redo all")
 		}
 		return sb.String(), nil
 	}
@@ -173,14 +173,18 @@ type RedoCommand struct{}
 
 func (c *RedoCommand) Name() string        { return "redo" }
 func (c *RedoCommand) Description() string { return "Redo last undone change(s)" }
-func (c *RedoCommand) Usage() string       { return "/redo [N]" }
+func (c *RedoCommand) Usage() string {
+	return `/redo           - Redo last undone change
+/redo all       - Redo the whole request that /undo all reverted
+/redo N         - Redo last N undone changes (max 20)`
+}
 func (c *RedoCommand) GetMetadata() CommandMetadata {
 	return CommandMetadata{
 		Category: CategorySession,
 		Icon:     "redo",
 		Priority: 71,
 		HasArgs:  true,
-		ArgHint:  "[N]",
+		ArgHint:  "[N|all]",
 	}
 }
 
@@ -190,11 +194,33 @@ func (c *RedoCommand) Execute(ctx context.Context, args []string, app AppInterfa
 		return "Undo manager not available.", nil
 	}
 
+	// /redo all — the mirror of /undo all. Re-applies the whole request as one
+	// transaction, preflighted before its first write and rolled back if a
+	// later change fails, rather than as N independent steps the user has to
+	// count out themselves.
+	if len(args) > 0 && (strings.EqualFold(args[0], "all") || strings.EqualFold(args[0], "request")) {
+		changes, err := mgr.RedoLastGroup()
+		if err != nil {
+			return fmt.Sprintf("Redo: %s", safeUndoError(err)), nil
+		}
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Redone %d change(s) from the last request:\n", len(changes))
+		for i, change := range changes {
+			fmt.Fprintf(&sb, "  %d. %s\n", i+1, safeChangeSummary(change.Summary()))
+		}
+		if len(changes) == 1 {
+			sb.WriteString("Undo this change: /undo")
+		} else {
+			sb.WriteString("Undo the whole request again: /undo all")
+		}
+		return sb.String(), nil
+	}
+
 	steps := 1
 	if len(args) > 0 {
 		n, err := strconv.Atoi(args[0])
 		if err != nil || n < 1 {
-			return fmt.Sprintf("Invalid argument %q. Use /redo [N].", args[0]), nil
+			return fmt.Sprintf("Invalid argument %q. Use /redo [N|all].", args[0]), nil
 		}
 		if n > MaxUndoSteps {
 			return fmt.Sprintf("Max %d steps per /redo. Run again if you need more.", MaxUndoSteps), nil

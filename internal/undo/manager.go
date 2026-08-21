@@ -149,6 +149,109 @@ func (m *Manager) Redo() (*FileChange, error) {
 	return &change, nil
 }
 
+// RedoLastGroup re-applies every change belonging to the same request group as
+// the most recently undone change, as one transaction. It is the mirror of
+// UndoLastGroup: without it, undoing a request atomically and then redoing it
+// took N separate calls, which is exactly the asymmetry the group path exists
+// to remove. If the most recent undone change has no group it behaves like a
+// single Redo.
+func (m *Manager) RedoLastGroup() ([]*FileChange, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if len(m.undone) == 0 {
+		return nil, fmt.Errorf("nothing to redo")
+	}
+
+	groupID := m.undone[len(m.undone)-1].GroupID
+	if groupID == "" {
+		// No group — single redo, mirroring Redo through the already-locked path.
+		change := m.undone[len(m.undone)-1]
+		m.undone = m.undone[:len(m.undone)-1]
+		if err := m.applyChange(&change); err != nil {
+			m.undone = append(m.undone, change)
+			return nil, fmt.Errorf("failed to redo: %w", err)
+		}
+		m.tracker.Record(change)
+		m.mutations++
+		return []*FileChange{&change}, nil
+	}
+
+	return m.redoGroupLocked(groupID)
+}
+
+// redoGroupLocked implements group redo. Caller must hold m.mu.
+func (m *Manager) redoGroupLocked(groupID string) ([]*FileChange, error) {
+	// Collect the group's entries in APPLY order, oldest first. undoGroupLocked
+	// pushed them onto the redo stack newest-first, so walking it backwards
+	// yields the order the changes were originally made in — which is the only
+	// order in which re-applying them reproduces the original result.
+	var grouped []*FileChange
+	for i := len(m.undone) - 1; i >= 0; i-- {
+		if m.undone[i].GroupID == groupID {
+			change := m.undone[i]
+			grouped = append(grouped, &change)
+		}
+	}
+
+	if len(grouped) == 0 {
+		return nil, fmt.Errorf("no undone changes found for group %s", groupID)
+	}
+
+	// Validate the whole group before the first write, for the same reason the
+	// forward group undo does: a later failure must not leave the request
+	// half-restored.
+	if err := preflightRedoChanges(grouped); err != nil {
+		return nil, fmt.Errorf("failed to redo group: %w", err)
+	}
+
+	var applied []*FileChange
+	for _, change := range grouped {
+		if err := m.applyChange(change); err != nil {
+			// Rollback is the undo half of the group transaction, newest first.
+			rollbackFailed := false
+			rollback := make([]*FileChange, 0, len(applied))
+			for j := len(applied) - 1; j >= 0; j-- {
+				rollback = append(rollback, applied[j])
+			}
+			if rbErr := preflightUndoChanges(rollback); rbErr != nil {
+				logging.Error("redo group rollback preflight failed", "error", rbErr)
+				rollbackFailed = true
+			} else {
+				for _, rollbackChange := range rollback {
+					if rbErr := m.revertChange(rollbackChange); rbErr != nil {
+						logging.Error("redo group rollback failed",
+							"file", rollbackChange.FilePath,
+							"error", rbErr)
+						rollbackFailed = true
+					}
+				}
+			}
+			if rollbackFailed {
+				return nil, fmt.Errorf("failed to redo group AND rollback incomplete (check logs): %w", err)
+			}
+			return nil, fmt.Errorf("failed to redo group (rolled back): %w", err)
+		}
+		applied = append(applied, change)
+	}
+
+	// Drop the group from the redo stack and put it back on the undo stack in
+	// the order the changes were originally recorded.
+	remaining := make([]FileChange, 0, len(m.undone))
+	for _, c := range m.undone {
+		if c.GroupID != groupID {
+			remaining = append(remaining, c)
+		}
+	}
+	m.undone = remaining
+	for _, change := range applied {
+		m.tracker.Record(*change)
+	}
+	m.mutations++
+
+	return applied, nil
+}
+
 // UndoGroup reverts all changes with the given group ID atomically.
 // Changes are undone in reverse order. If any revert fails, already-reverted
 // changes are re-applied to maintain consistency.

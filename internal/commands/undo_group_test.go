@@ -57,7 +57,7 @@ func TestUndoAllRevertsWholeRequest(t *testing.T) {
 	if !strings.Contains(got, "Undone 3 change(s) from the last request") {
 		t.Fatalf("result does not report the whole request:\n%s", got)
 	}
-	if !strings.Contains(got, "/redo 3") {
+	if !strings.Contains(got, "/redo all") {
 		t.Fatalf("result does not say how to re-apply the group:\n%s", got)
 	}
 	for _, path := range paths {
@@ -109,5 +109,52 @@ func TestUndoSingleStaysQuietWithoutAGroup(t *testing.T) {
 	}
 	if strings.Contains(got, "same request") {
 		t.Fatalf("ungrouped change must not claim a request:\n%s", got)
+	}
+}
+
+// TestRedoAllRestoresWholeRequest closes the round trip at the command layer.
+// Before this, /undo all reverted a five-file request in one atomic step and
+// then getting it back took the user counting out /redo 5 — the exact asymmetry
+// the group path exists to remove.
+func TestRedoAllRestoresWholeRequest(t *testing.T) {
+	dir := t.TempDir()
+	mgr := undo.NewManager()
+	paths := recordGroupedCreations(t, mgr, dir, "msg-1", "a.go", "b.go", "c.go")
+	app := &undoFakeApp{fakeAppForMCP: &fakeAppForMCP{}, mgr: mgr}
+
+	if _, err := (&UndoCommand{}).Execute(context.Background(), []string{"all"}, app); err != nil {
+		t.Fatalf("undo all: %v", err)
+	}
+	got, err := (&RedoCommand{}).Execute(context.Background(), []string{"all"}, app)
+	if err != nil {
+		t.Fatalf("redo all: %v", err)
+	}
+	if !strings.Contains(got, "Redone 3 change(s) from the last request") {
+		t.Fatalf("result does not report the whole request:\n%s", got)
+	}
+	for _, path := range paths {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s was not restored: %v", filepath.Base(path), err)
+		}
+	}
+	if n := mgr.Count(); n != 3 {
+		t.Errorf("expected the request back on the undo stack, got %d", n)
+	}
+}
+
+// TestUndoAllPointsAtTheSymmetricRedo: the hint has to name a form that exists
+// and covers the same set, otherwise the user is sent to count steps by hand.
+func TestUndoAllPointsAtTheSymmetricRedo(t *testing.T) {
+	dir := t.TempDir()
+	mgr := undo.NewManager()
+	recordGroupedCreations(t, mgr, dir, "msg-1", "a.go", "b.go")
+	app := &undoFakeApp{fakeAppForMCP: &fakeAppForMCP{}, mgr: mgr}
+
+	got, err := (&UndoCommand{}).Execute(context.Background(), []string{"all"}, app)
+	if err != nil {
+		t.Fatalf("undo all: %v", err)
+	}
+	if !strings.Contains(got, "/redo all") {
+		t.Fatalf("undo all must point at the symmetric redo:\n%s", got)
 	}
 }
