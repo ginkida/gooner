@@ -2,13 +2,24 @@ package git
 
 import (
 	"bufio"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/bmatcuk/doublestar/v4"
+
+	"gokin/internal/logging"
 )
+
+// maxGitignoreBytes bounds a single .gitignore. Real ones are a few hundred
+// bytes; anything past this is pathological, and refusing it loudly beats
+// either reading it unbounded or truncating it silently — a dropped pattern
+// widens what the whole tool considers project source.
+const maxGitignoreBytes = 1 << 20 // 1MB
 
 // pattern represents a single gitignore pattern.
 type pattern struct {
@@ -59,7 +70,12 @@ func (g *GitIgnore) Load() error {
 	globalGitignore := g.getGlobalGitignore()
 	if globalGitignore != "" {
 		if err := g.loadFile(globalGitignore, g.workDir); err != nil && !os.IsNotExist(err) {
-			// Ignore errors for global gitignore
+			// Not fatal — a missing or unreadable global file must not stop the
+			// project's own rules from loading. It is logged rather than
+			// swallowed because the visible effect is silent: fewer patterns,
+			// so files the user considers ignored start looking like source.
+			logging.Warn("gitignore: global file not loaded",
+				"path", globalGitignore, "error", err)
 		}
 	}
 
@@ -77,7 +93,10 @@ func (g *GitIgnore) Load() error {
 		if !info.IsDir() && info.Name() == ".gitignore" && path != rootGitignore {
 			baseDir := filepath.Dir(path)
 			if err := g.loadFile(path, baseDir); err != nil && !os.IsNotExist(err) {
-				// Continue even on error
+				// Same reasoning as the global file: keep walking, but leave a
+				// trace, because the failure is otherwise invisible.
+				logging.Warn("gitignore: nested file not loaded",
+					"path", path, "error", err)
 			}
 		}
 		return nil
@@ -103,16 +122,29 @@ func (g *GitIgnore) loadFile(path, baseDir string) error {
 	}
 	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		p := g.parseLine(line, baseDir)
-		if p != nil {
-			g.patterns = append(g.patterns, *p)
-		}
+	if info, statErr := file.Stat(); statErr == nil && info.Size() > maxGitignoreBytes {
+		return fmt.Errorf("gitignore %s exceeds %d bytes", path, maxGitignoreBytes)
 	}
 
-	return scanner.Err()
+	// bufio.Reader, not bufio.Scanner: Scanner stops at its 64KB line cap and
+	// reports ErrTooLong, so one long line silently discards every pattern
+	// AFTER it — and a dropped ignore pattern does not fail loudly, it just
+	// makes ignored files look like project source.
+	reader := bufio.NewReader(file)
+	for {
+		line, readErr := reader.ReadString('\n')
+		if line != "" {
+			if p := g.parseLine(line, baseDir); p != nil {
+				g.patterns = append(g.patterns, *p)
+			}
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				return nil
+			}
+			return readErr
+		}
+	}
 }
 
 // parseLine parses a single gitignore line.
