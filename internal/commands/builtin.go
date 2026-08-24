@@ -1758,8 +1758,8 @@ func getCommandExample(name string) string {
 		"blame":    "  /blame internal/app/app.go         — full-file authorship (capped 200 lines)\n  /blame internal/app/app.go 100-150 — line range\n  /blame README.md 1                 — single line",
 		"show":     "  /show              — show HEAD (most recent commit)\n  /show abc123       — show a specific commit\n  /show HEAD~3       — three commits back\n  /show abc123 main.go — scope diff to one file",
 		// v0.74–v0.76 release / upgrade feedback loop
-		"whats-new": "  /whats-new           — release notes for the current version",
-		"changelog": "  /changelog           — compact list of recent releases",
+		"whats-new": "  /whats-new           — release notes for the current version\n  /whats-new v0.74.0   — release notes for a specific tag",
+		"changelog": "  /changelog           — compact list of recent releases\n  /changelog 10        — last 10 releases (max 50)",
 		"restart":   "  /restart             — re-exec into the latest installed binary (for self-update)",
 		// v0.78.26 — fill out examples for the rest of the user-facing
 		// complex commands. Trivial commands (/pwd /paste /ql /shortcuts
@@ -1773,7 +1773,7 @@ func getCommandExample(name string) string {
 		"thinking":    "  /thinking auto        — reason only when the task is hard\n  /thinking on          — force reasoning every turn\n  /thinking off         — never reason\n  /thinking 16384       — force reasoning with a 16K-token budget",
 		"timeout":     "  /timeout             — show the effective model round cap\n  /timeout 20m         — apply a 20-minute cap live\n  /timeout default     — restore the recommended default",
 		"open":        "  /open main.go         — open file in $EDITOR (or vi)\n  /open internal/app/app.go",
-		"resume-plan": "  /resume-plan          — restore the plan saved by the last /clear",
+		"resume-plan": "  /resume-plan          — restore the plan saved by the last /clear\n  /resume-plan list     — show which plans can be resumed\n  /resume-plan abc123   — resume one plan by ID",
 		"recovery":    "  /recovery             — show the recovery snapshot from the last unclean shutdown",
 		"checkpoints": "  /checkpoints          — list session checkpoints (auto-saved every N messages)",
 		"config":      "  /config               — print active config + which file it came from",
