@@ -65,6 +65,40 @@ jobs:
           files: coverage.out
         continue-on-error: true
 
+  release-toolchain:
+    # release.yml resolves a FLOATING go-version and setup-go pins
+    # GOTOOLCHAIN=local, so a go.mod directive newer than whatever that
+    # resolution installs breaks the release build — and ONLY there, because
+    # every other job here pins an explicit version. v0.100.140 failed exactly
+    # that way, fifteen seconds in, after the tag had already been pushed.
+    # This job reproduces the release toolchain so the failure lands in CI.
+    # Keep go-version identical to release.yml.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: '1.25'
+
+      - name: The guard must use the same toolchain spec as release.yml
+        # Otherwise this job silently stops reproducing the release build.
+        run: |
+          set -euo pipefail
+          ci=$(grep -A2 'setup-go' .github/workflows/ci.yml | grep -m1 "go-version: '1.25'" || true)
+          rel=$(grep -m1 "go-version:" .github/workflows/release.yml | tr -d " '")
+          test -n "$ci" || { echo "ci.yml release-toolchain job no longer pins go-version: '1.25'"; exit 1; }
+          test "$rel" = "go-version:1.25" || {
+            echo "release.yml now uses $rel — update the release-toolchain job in ci.yml to match"; exit 1; }
+
+      - name: Build under the release toolchain
+        # Set explicitly rather than relying on setup-go's default: if that
+        # default ever changed to auto, the toolchain would be downloaded and
+        # this guard would silently stop guarding.
+        env:
+          GOTOOLCHAIN: local
+        run: go build -o /dev/null ./cmd/gokin
+
   build:
     runs-on: ubuntu-latest
     strategy:
