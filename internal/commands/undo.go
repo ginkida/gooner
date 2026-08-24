@@ -82,10 +82,27 @@ func (c *UndoCommand) Execute(ctx context.Context, args []string, app AppInterfa
 		if len(recent) == 0 {
 			return "No changes to undo.", nil
 		}
+		// How far the LAST REQUEST reaches. /undo all reverts exactly that span,
+		// and without marking it the list gives no way to see where it ends —
+		// which is the one thing a reader needs before choosing between /undo N
+		// and /undo all.
+		lastRequest := 0
+		if group := recent[0].GroupID; group != "" {
+			for _, change := range recent {
+				if change.GroupID != group {
+					break
+				}
+				lastRequest++
+			}
+		}
+
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "Recent undoable changes (most recent first, total %d):\n", mgr.Count())
 		for i, change := range recent {
 			fmt.Fprintf(&sb, "  %2d. %s\n", i+1, safeChangeSummary(change.Summary()))
+			if lastRequest > 1 && i+1 == lastRequest {
+				fmt.Fprintf(&sb, "      └─ end of the last request (%d change(s)) — /undo all reverts exactly these\n", lastRequest)
+			}
 		}
 		sb.WriteString("\n1 is the next change /undo will revert. Use /undo N to revert through item N.")
 		return sb.String(), nil

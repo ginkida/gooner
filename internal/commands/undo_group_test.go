@@ -191,3 +191,65 @@ func TestUndoAllReachesTheGroupBranchThroughTheHandler(t *testing.T) {
 		})
 	}
 }
+
+// TestUndoListMarksTheRequestBoundary: the list is what a reader consults
+// before choosing between /undo N and /undo all, and until the per-request
+// group became visible it gave no way to see how far "the last request"
+// reaches — the user had to guess a number. The marker is deliberately drawn
+// only for the FIRST group and only when it spans more than one change:
+// deeper boundaries are noise, and for a single-change request /undo and
+// /undo all do the same thing.
+func TestUndoListMarksTheRequestBoundary(t *testing.T) {
+	dir := t.TempDir()
+	mgr := undo.NewManager()
+	recordGroupedCreations(t, mgr, dir, "msg-old", "old1.go", "old2.go")
+	recordGroupedCreations(t, mgr, dir, "msg-new", "a.go", "b.go", "c.go")
+	app := &undoFakeApp{fakeAppForMCP: &fakeAppForMCP{}, mgr: mgr}
+
+	out, err := (&UndoCommand{}).Execute(context.Background(), []string{"list"}, app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "end of the last request (3 change(s))") {
+		t.Fatalf("list does not show how far the last request reaches:\n%s", out)
+	}
+	if !strings.Contains(out, "/undo all") {
+		t.Errorf("the boundary must name the command that reverts exactly that span:\n%s", out)
+	}
+	// The marker belongs after the third entry, not somewhere in the older run.
+	boundary := strings.Index(out, "end of the last request")
+	third := strings.Index(out, " 3. ")
+	fourth := strings.Index(out, " 4. ")
+	if !(third < boundary && boundary < fourth) {
+		t.Errorf("boundary is misplaced relative to items 3 and 4:\n%s", out)
+	}
+}
+
+// TestUndoListStaysQuietWithoutAGroup: a change recorded outside any request
+// must not grow a boundary line, and neither should a request of one.
+func TestUndoListStaysQuietWithoutAGroup(t *testing.T) {
+	mgr := undo.NewManager()
+	mgr.Record(undo.FileChange{FilePath: "solo.go", Tool: "edit"})
+	app := &undoFakeApp{fakeAppForMCP: &fakeAppForMCP{}, mgr: mgr}
+
+	out, err := (&UndoCommand{}).Execute(context.Background(), []string{"list"}, app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "end of the last request") {
+		t.Errorf("an ungrouped change must not claim a request boundary:\n%s", out)
+	}
+
+	single := undo.NewManager()
+	single.SetActiveGroup("msg-1")
+	single.Record(undo.FileChange{FilePath: "one.go", Tool: "edit"})
+	single.ClearActiveGroup()
+	out2, err := (&UndoCommand{}).Execute(context.Background(), []string{"list"},
+		&undoFakeApp{fakeAppForMCP: &fakeAppForMCP{}, mgr: single})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out2, "end of the last request") {
+		t.Errorf("a one-change request needs no boundary — /undo and /undo all are the same there:\n%s", out2)
+	}
+}
