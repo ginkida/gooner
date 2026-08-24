@@ -1237,7 +1237,7 @@ func (m Model) lastStreamSnippet() string {
 		return ""
 	}
 	// Reserve ~20 cols for the "Writing: " prefix + " · <elapsed>" suffix so the
-	// card's truncateRunes(width-2) clip doesn't eat the elapsed. Floor so a
+	// card's truncateSafeForWidth(width-2) clip doesn't eat the elapsed. Floor so a
 	// tiny/zero width (before the first WindowSizeMsg) still shows something.
 	budget := max(m.width-20, 24)
 	runes := []rune(last)

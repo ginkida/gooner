@@ -130,7 +130,7 @@ func (m Model) renderLiveActivityCard(feedRendered bool) string {
 	if !m.liveDetailExpanded {
 		minimalStyle := lipgloss.NewStyle().Foreground(ColorMuted)
 		return barStyle.Render(firstGlyph) + " " +
-			minimalStyle.Render(truncateRunes(current, max(width-2, 1)))
+			minimalStyle.Render(truncateSafeForWidth(current, max(width-2, 1)))
 	}
 
 	// Prefix every line with a coloured leading glyph. First line uses the
@@ -138,7 +138,7 @@ func (m Model) renderLiveActivityCard(feedRendered bool) string {
 	// so the animation doesn't become visually noisy.
 	var out strings.Builder
 	out.WriteString(barStyle.Render(firstGlyph) + " ")
-	out.WriteString(valueStyle.Render(truncateRunes(current, max(width-2, 1))))
+	out.WriteString(valueStyle.Render(truncateSafeForWidth(current, max(width-2, 1))))
 	if feedOpen || rowBudget <= 1 {
 		return out.String()
 	}
@@ -146,14 +146,14 @@ func (m Model) renderLiveActivityCard(feedRendered bool) string {
 	appendTodo := func(todo string) {
 		out.WriteByte('\n')
 		out.WriteString(barStyle.Render("▎") + " " +
-			valueStyle.Render(truncateRunes(todo, max(width-2, 1))))
+			valueStyle.Render(truncateSafeForWidth(todo, max(width-2, 1))))
 		rowsUsed++
 	}
 	appendNext := func(next string) {
 		out.WriteByte('\n')
 		out.WriteString(barStyle.Render("▎") + " " +
 			dimStyle.Render("→ ") +
-			valueStyle.Render(truncateRunes(next, max(width-4, 1))))
+			valueStyle.Render(truncateSafeForWidth(next, max(width-4, 1))))
 		rowsUsed++
 	}
 
@@ -271,7 +271,7 @@ func (m Model) liveActivityCurrentLine(snapshot ActivityFeedSnapshot) string {
 			return m.withElapsed("Thinking")
 		}
 		if h := lastStreamHeading(m.currentResponseBuf.String()); h != "" {
-			return m.withElapsed("Writing: " + truncateRunes(h, max(m.width-20, 24)))
+			return m.withElapsed("Writing: " + truncateSafeForWidth(h, max(m.width-20, 24)))
 		}
 		// Clean the snippet: strip leading bullets/dashes/stars from the
 		// model's markdown so "Writing: - `tui.go`" doesn't read as a
@@ -492,9 +492,14 @@ func allDigits(s string) bool {
 	return len(s) > 0
 }
 
-func truncateRunes(text string, maxRunes int) string {
-	if maxRunes <= 0 {
+// truncateSafeForWidth sanitizes control characters out of text and clips it to
+// a DISPLAY WIDTH, not a rune count — it delegates to truncateForWidth, so a
+// CJK or emoji run costs its real two columns. It was called truncateRunes with
+// a maxRunes parameter, which said the opposite of what it does and made every
+// audit of the width-versus-rune class stop here to re-derive that it is safe.
+func truncateSafeForWidth(text string, maxWidth int) string {
+	if maxWidth <= 0 {
 		return ""
 	}
-	return truncateForWidth(safeKeyEntryText(text), maxRunes)
+	return truncateForWidth(safeKeyEntryText(text), maxWidth)
 }

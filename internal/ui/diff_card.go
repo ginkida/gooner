@@ -117,7 +117,7 @@ func extractDiffPreviewLines(oldContent, newContent string, maxLines, lineWidth 
 				if strings.TrimSpace(line) == "" {
 					continue
 				}
-				out = append(out, style.Render(prefix+truncateRunes(line, lineWidth-len(prefix))))
+				out = append(out, style.Render(prefix+truncateSafeForWidth(line, lineWidth-len(prefix))))
 			}
 		}
 		return out
