@@ -1,6 +1,9 @@
 package app
 
-import "gokin/internal/config"
+import (
+	"gokin/internal/config"
+	"gokin/internal/ratelimit"
+)
 
 // snapshotConfig returns the live config pointer, read under a.mu.
 //
@@ -21,4 +24,20 @@ func (a *App) snapshotConfig() *config.Config {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.config
+}
+
+// rateLimiterSnapshot returns the live rate limiter, read under a.mu.
+//
+// applyConfig creates and assigns a.rateLimiter under that lock, while both
+// readers — handleRateLimitMetadata and sendContextHealthUpdate — run on the
+// agent runner's rate-limit callback goroutine, which is NOT serialized with
+// the app's. The limiter itself is internally synchronized, so the lock is held
+// only long enough to copy the pointer.
+func (a *App) rateLimiterSnapshot() *ratelimit.Limiter {
+	if a == nil {
+		return nil
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.rateLimiter
 }

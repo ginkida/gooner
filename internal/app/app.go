@@ -3223,11 +3223,12 @@ func (a *App) sendTokenUsageUpdate() {
 
 // handleRateLimitMetadata updates the app's rate limiters with metadata from provider.
 func (a *App) handleRateLimitMetadata(rl *client.RateLimitMetadata) {
-	if rl == nil || a.rateLimiter == nil {
+	limiter := a.rateLimiterSnapshot()
+	if rl == nil || limiter == nil {
 		return
 	}
 
-	a.rateLimiter.UpdateLimits(
+	limiter.UpdateLimits(
 		rl.RequestsLimit, rl.RequestsRemaining, rl.RequestsReset,
 		rl.TokensLimit, rl.TokensRemaining, rl.TokensReset,
 	)
@@ -3273,8 +3274,8 @@ func (a *App) sendContextHealthUpdate() {
 	}
 
 	// Add rate limit info if available
-	if a.rateLimiter != nil {
-		stats := a.rateLimiter.Stats()
+	if limiter := a.rateLimiterSnapshot(); limiter != nil {
+		stats := limiter.Stats()
 		msg.RequestsRemaining = int64(stats.AvailableRequests)
 		msg.TokensRemaining = int64(stats.AvailableTokens)
 	}
