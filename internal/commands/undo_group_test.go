@@ -158,3 +158,36 @@ func TestUndoAllPointsAtTheSymmetricRedo(t *testing.T) {
 		t.Fatalf("undo all must point at the symmetric redo:\n%s", got)
 	}
 }
+
+// TestUndoAllReachesTheGroupBranchThroughTheHandler covers the layer the other
+// tests in this file skip: they call UndoCommand.Execute directly, so nothing
+// proved that a user typing "/undo all" — or its alias — actually arrives with
+// args ["all"] rather than being swallowed by parsing or alias resolution.
+func TestUndoAllReachesTheGroupBranchThroughTheHandler(t *testing.T) {
+	for _, input := range []string{"/undo all", "/u all", "/UNDO all"} {
+		t.Run(input, func(t *testing.T) {
+			dir := t.TempDir()
+			mgr := undo.NewManager()
+			paths := recordGroupedCreations(t, mgr, dir, "msg-1", "a.go", "b.go")
+			app := &undoFakeApp{fakeAppForMCP: &fakeAppForMCP{}, mgr: mgr}
+
+			h := NewHandler()
+			name, args, ok := h.Parse(input)
+			if !ok {
+				t.Fatalf("%q was not recognised as a command", input)
+			}
+			got, err := h.Execute(context.Background(), name, args, app)
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if !strings.Contains(got, "Undone 2 change(s) from the last request") {
+				t.Fatalf("%q did not reach the group branch:\n%s", input, got)
+			}
+			for _, path := range paths {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Errorf("%s survived the group undo", filepath.Base(path))
+				}
+			}
+		})
+	}
+}
