@@ -4004,8 +4004,8 @@ func (a *App) validateVerifyCommandSafety(ctx context.Context, command string, p
 	denyContains := normalizePolicyMarkers(defaultVerifyPolicyDenyContains())
 	allowContains := make([]string, 0)
 	requireIntent := true
-	if a != nil && a.config != nil {
-		policy := a.config.Plan.VerifyPolicy
+	if cfg := a.snapshotConfig(); cfg != nil {
+		policy := cfg.Plan.VerifyPolicy
 		if policy.Enabled {
 			requireIntent = policy.RequireVerificationIntent
 			allowContains = append(allowContains, normalizePolicyMarkers(policy.AllowContains)...)

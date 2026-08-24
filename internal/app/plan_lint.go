@@ -25,6 +25,13 @@ func (a *App) lintPlanBeforeApproval(ctx context.Context, p *plan.Plan) error {
 	profile := donegate.DetectProfile(a.workDir)
 	issues := make([]string, 0)
 
+	// a.config is swapped by ApplyConfig under a.mu, and this handler runs
+	// wherever exit_plan_mode was called — including a SUB-AGENT's goroutine,
+	// which is distinct from the app one. Snapshot once, outside the per-step
+	// loop; the config is immutable post-publish.
+	cfg := a.snapshotConfig()
+	requireArtifactPaths := cfg != nil && cfg.Plan.RequireExpectedArtifactPaths
+
 	for _, step := range steps {
 		if step == nil {
 			issues = append(issues, "step is nil")
@@ -51,7 +58,7 @@ func (a *App) lintPlanBeforeApproval(ctx context.Context, p *plan.Plan) error {
 			}
 		}
 
-		if a != nil && a.config != nil && a.config.Plan.RequireExpectedArtifactPaths {
+		if requireArtifactPaths {
 			if stepLikelyMutatingIntent(step) && len(normalizeExpectedArtifactPaths(step.ExpectedArtifactPaths)) == 0 {
 				issues = append(issues, fmt.Sprintf(
 					"step %d (%s): missing expected_artifact_paths for mutating step (strict mode)",
