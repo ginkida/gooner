@@ -1,6 +1,6 @@
 module gokin
 
-go 1.25.14
+go 1.25.13
 
 require (
 	github.com/alecthomas/chroma/v2 v2.23.0
