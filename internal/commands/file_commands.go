@@ -100,9 +100,22 @@ func expandFileCommandTemplate(template string, args []string) string {
 	return strings.TrimSpace(out)
 }
 
+// maxFileCommandBytes bounds one command file. The body becomes a MODEL PROMPT,
+// and every .md in the commands directory is read at boot, so an oversized file
+// costs both startup memory and — if invoked — most of a context window, with
+// nothing on screen explaining where the tokens went. Real prompt templates are
+// a few kilobytes; this is generous enough that only a document misfiled into
+// the directory trips it. Refusing loudly beats truncating: half a template is
+// a prompt that says something its author never wrote.
+const maxFileCommandBytes = 256 << 10
+
 // parseFileCommand reads one command file: optional YAML frontmatter between
 // `---` fences, body = prompt template.
 func parseFileCommand(path, source string) (*FileCommand, error) {
+	if info, err := os.Stat(path); err == nil && info.Size() > maxFileCommandBytes {
+		return nil, fmt.Errorf("file is %d bytes, over the %d-byte limit for a command template",
+			info.Size(), maxFileCommandBytes)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
