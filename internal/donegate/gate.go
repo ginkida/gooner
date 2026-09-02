@@ -1925,9 +1925,23 @@ func looksLikeCodingTask(msg string) bool {
 	if lower == "" {
 		return false
 	}
+	// Change verbs only. Question words are deliberately absent: bash is also
+	// how the agent investigates, and enforcing a build because someone asked
+	// "why does this crash" would run verification during pure analysis — the
+	// same reason IsImplementationTool excludes bash. The list is vocabulary,
+	// which guesses at intent rather than reading what happened, and that is a
+	// deliberate trade: the evidence-based alternatives ("the command was not
+	// read-only", "git reports a dirty tree") both fire on turns that changed
+	// nothing, and in a repository whose build is ALREADY broken that turns a
+	// question into a blocked turn. Over-verifying costs time; blocking work
+	// that never needed checking costs the work.
 	keywords := []string{
 		"implement", "fix", "refactor", "update", "change", "bug", "build", "lint", "compile",
+		"add", "remove", "delete", "rename", "write", "create", "migrat", "generat",
+		"format", "patch", "revert", "extract", "replace", "clean up", "make it",
 		"доработ", "исправ", "рефактор", "обнов", "помен", "ошиб", "сборк", "линт", "код",
+		"почин", "перепиш", "добав", "убер", "удал", "создай", "напиш", "переимен",
+		"компилир", "генер", "формат", "миграц", "вынес", "замен", "почист", "внедр",
 	}
 	for _, kw := range keywords {
 		if strings.Contains(lower, kw) {
