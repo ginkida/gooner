@@ -25,9 +25,25 @@ type agentTypeFrontmatter struct {
 	Priority    int      `yaml:"priority"`
 }
 
+// maxAgentTypeBytes bounds one agent-type file. The body becomes the agent's
+// SYSTEM PROMPT, so unlike a command template — which costs a context window
+// once, when invoked — this cost recurs on every single request the agent
+// makes, for as long as the type exists. The field it lands in
+// (Agent.projectContext) is bounded to maxSubAgentPromptChars when a delegated
+// sub-agent fills it from BuildSubAgentPrompt; this producer was the one path
+// into it with no bound at all. Real agent definitions are a few kilobytes;
+// only a document misfiled into the agents directory trips this. Refusing
+// loudly beats truncating: half a system prompt still instructs the model, and
+// it instructs it to do something its author never wrote.
+const maxAgentTypeBytes = 256 << 10
+
 // parseAgentTypeFile reads one agent-type file: required YAML frontmatter
 // with a non-empty description, body = system prompt.
 func parseAgentTypeFile(path, source string) (*DynamicAgentType, []string, error) {
+	if info, err := os.Stat(path); err == nil && info.Size() > maxAgentTypeBytes {
+		return nil, nil, fmt.Errorf("file is %d bytes, over the %d-byte limit for an agent system prompt",
+			info.Size(), maxAgentTypeBytes)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, nil, err
