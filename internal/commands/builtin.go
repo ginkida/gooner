@@ -593,8 +593,11 @@ func (c *ResumeCommand) Execute(ctx context.Context, args []string, app AppInter
 
 	// No args: show recent sessions for this project to pick from
 	if len(args) == 0 {
-		sessions, err := hm.ListSessions()
+		sessions, problems, err := hm.ListSessionsWithProblems()
 		if err != nil || len(sessions) == 0 {
+			if msg := unreadableSessionsNote(problems); msg != "" {
+				return msg, nil
+			}
 			return "No saved sessions. Use /save to save the current session first.", nil
 		}
 
@@ -720,12 +723,15 @@ func (c *SessionsCommand) Execute(ctx context.Context, args []string, app AppInt
 		return fmt.Sprintf("Failed to get history manager: %v", err), nil
 	}
 
-	sessions, err := hm.ListSessions()
+	sessions, problems, err := hm.ListSessionsWithProblems()
 	if err != nil {
 		return fmt.Sprintf("Failed to list sessions: %v", err), nil
 	}
 
 	if len(sessions) == 0 {
+		if msg := unreadableSessionsNote(problems); msg != "" {
+			return msg, nil
+		}
 		return "No saved sessions found.", nil
 	}
 
@@ -1893,3 +1899,29 @@ func runtimeProviderForConfig(cfg *config.Config) string {
 func normalizeProviderName(provider string) string {
 	return strings.ToLower(strings.TrimSpace(provider))
 }
+
+// unreadableSessionsNote turns skipped session files into something a person
+// can act on. It is used only when the readable list is empty, because that is
+// the moment the honest answer flips: reporting "no saved sessions" to someone
+// whose only session is sitting on disk unreadable tells them their
+// conversation never existed, and they stop looking for it.
+func unreadableSessionsNote(problems []error) string {
+	if len(problems) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "No readable sessions, but %d session file(s) could not be read:\n", len(problems))
+	for i, p := range problems {
+		if i == maxReportedUnreadableSessions {
+			fmt.Fprintf(&b, "  ... and %d more\n", len(problems)-i)
+			break
+		}
+		fmt.Fprintf(&b, "  - %v\n", p)
+	}
+	b.WriteString("\nThe files are still on disk. Nothing has been deleted.")
+	return b.String()
+}
+
+// maxReportedUnreadableSessions keeps a directory of damaged files from
+// filling the screen; the count above the list stays exact.
+const maxReportedUnreadableSessions = 5

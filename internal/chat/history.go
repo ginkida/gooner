@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"gokin/internal/fileutil"
+	"gokin/internal/logging"
 )
 
 // HistoryEntry represents a saved history entry.
@@ -376,22 +377,43 @@ func loadSessionMeta(path string) (SessionInfo, error) {
 
 // ListSessions returns information about all saved sessions.
 func (m *HistoryManager) ListSessions() ([]SessionInfo, error) {
+	sessions, problems, err := m.ListSessionsWithProblems()
+	// A session that cannot be read is a conversation the user still has and
+	// cannot reach. Callers on this path discard that fact, so record it here:
+	// without a line naming the file, an unreadable session is indistinguishable
+	// from never having saved one, and auto-resume simply starts fresh.
+	for _, p := range problems {
+		logging.Warn("unreadable session file skipped", "error", p)
+	}
+	return sessions, err
+}
+
+// ListSessionsWithProblems returns the readable sessions plus one error per
+// file that could not be read, following the same two-return shape the loop
+// store uses. The distinction matters at exactly one moment: when the readable
+// list comes back empty. "No saved sessions" is then a claim about the user's
+// history, and it is false if a file was skipped — so a caller that reports
+// emptiness to a person must ask for the problems and say which files it could
+// not read.
+func (m *HistoryManager) ListSessionsWithProblems() ([]SessionInfo, []error, error) {
 	sessionsDir, err := getSessionsDir()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Create directory if it doesn't exist (0700: only owner can access session data)
 	names, err := scanJSONFiles(sessionsDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var sessions []SessionInfo
+	var problems []error
 	for _, name := range names {
 		info, err := loadSessionMeta(filepath.Join(sessionsDir, name))
 		if err != nil {
-			continue // Skip invalid files
+			problems = append(problems, fmt.Errorf("session %s: %w", name, err))
+			continue
 		}
 
 		// Bind shallow metadata to the file it came from. Previously a corrupt
@@ -400,6 +422,8 @@ func (m *HistoryManager) ListSessions() ([]SessionInfo, error) {
 		// the work-directory filter applied to the redirect's metadata.
 		filenameID := strings.TrimSuffix(name, ".json")
 		if ValidateSessionID(info.ID) != nil || info.ID != filenameID {
+			problems = append(problems, fmt.Errorf("session %s: file names %q but contains id %q",
+				name, filenameID, info.ID))
 			continue
 		}
 		sessions = append(sessions, info)
@@ -411,7 +435,7 @@ func (m *HistoryManager) ListSessions() ([]SessionInfo, error) {
 		return sessions[i].LastActive.After(sessions[j].LastActive)
 	})
 
-	return sessions, nil
+	return sessions, problems, nil
 }
 
 // DeleteSession deletes a saved session.
