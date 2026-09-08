@@ -113,3 +113,49 @@ func TestBuildIterationPrompt_SmartnessSignals(t *testing.T) {
 		t.Errorf("monitor task should get monitoring done-coaching:\n%s", pm)
 	}
 }
+
+// The recurring-check rule in tier 3 existed only in English ("every" +
+// "check"). Its Russian mirror was missing, so an ordinary watch task accrued
+// no-progress and auto-paused after ten iterations — punished for doing
+// exactly its job, since making no changes is what watching looks like.
+func TestIsMonitorTask_RussianPeriodicWatchIsRecognised(t *testing.T) {
+	for _, task := range []string{
+		"раз в час смотри что нового",
+		"каждые полчаса гляди в логи",
+		"периодически проверяй статус прода",
+		"регулярно смотри на очередь",
+	} {
+		if !IsMonitorTask(task) {
+			t.Errorf("%q is a watch task; churn auto-pause will stop it for making no changes", task)
+		}
+	}
+}
+
+// Two signals are required for the same reason the English rule requires them:
+// a bare look verb is as common in action tasks as a bare "check". An action
+// task keeps churn protection even when it mentions looking periodically —
+// that protection is the point of the feature and must not be silently lost.
+func TestIsMonitorTask_PeriodicPhrasingDoesNotStealActionTasks(t *testing.T) {
+	for _, task := range []string{
+		"каждый день чини падающие тесты",
+		"раз в час добавляй недостающие тесты",
+		"сделай рефакторинг и проверяй тесты",
+		"периодически исправь то что сломалось",
+	} {
+		if IsMonitorTask(task) {
+			t.Errorf("%q does work; exempting it from churn lets a stuck loop run forever", task)
+		}
+	}
+}
+
+// A single look verb without periodicity is not a watch task either.
+func TestIsMonitorTask_BareLookVerbIsNotMonitoring(t *testing.T) {
+	for _, task := range []string{
+		"посмотри что в логах",
+		"глянь на конфиг",
+	} {
+		if IsMonitorTask(task) {
+			t.Errorf("%q names no recurrence; one signal must not be enough", task)
+		}
+	}
+}

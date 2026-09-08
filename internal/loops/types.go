@@ -336,6 +336,29 @@ func IsMonitorTask(task string) bool {
 	if strings.Contains(t, "every") && strings.Contains(t, "check") {
 		return true
 	}
+	// The Russian mirror of the rule above, which existed only in English. Two
+	// signals are required for the same reason: a bare look verb is as common in
+	// action tasks as a bare "check", so periodicity has to be explicit. Without
+	// this, an ordinary watch task ("раз в час смотри что нового") accrued
+	// no-progress and auto-paused after ten iterations — for doing exactly the
+	// job it was given, since making no changes is what watching looks like.
+	if containsAnyOf(t, russianPeriodicMarkers) && containsAnyOf(t, russianInspectVerbs) {
+		return true
+	}
+	return false
+}
+
+var (
+	russianPeriodicMarkers = []string{"кажд", "раз в ", "периодическ", "регулярно", "по расписан"}
+	russianInspectVerbs    = []string{"смотри", "гляди", "глянь", "смотреть", "провер"}
+)
+
+func containsAnyOf(s string, subs []string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
 	return false
 }
 
