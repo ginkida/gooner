@@ -39,17 +39,11 @@ func TestExecutionStrategy_IsValid(t *testing.T) {
 	}
 }
 
-func TestExecutionStrategy_RequiresTools(t *testing.T) {
-	if StrategyDirect.RequiresTools() {
-		t.Error("StrategyDirect should not require tools")
-	}
-	toolStrategies := []ExecutionStrategy{StrategySingleTool, StrategyExecutor, StrategySubAgent}
-	for _, s := range toolStrategies {
-		if !s.RequiresTools() {
-			t.Errorf("%v.RequiresTools() = false, want true", s)
-		}
-	}
-}
+// TestExecutionStrategy_RequiresTools is gone with the predicate it covered.
+// Its central assertion — "StrategyDirect should not require tools" — was
+// never true of a released build: executeDirect runs the same executor as the
+// other strategies, with core tools and memory. What the strategy actually
+// selects is pinned by TestSelectToolSets_DirectStrategyStillCarriesCoreTools.
 
 func TestExecutionStrategy_RequiresMultipleAgents(t *testing.T) {
 	// No coordinator support — always false for all strategies.
@@ -65,7 +59,7 @@ func TestExecutionStrategy_GetDescription(t *testing.T) {
 		s    ExecutionStrategy
 		want string
 	}{
-		{StrategyDirect, "Direct AI response"},
+		{StrategyDirect, "Direct response (core tools, fast model)"},
 		{StrategySingleTool, "Single tool call"},
 		{StrategyExecutor, "Standard execution"},
 		{StrategySubAgent, "Specialized agent"},

@@ -1168,7 +1168,10 @@ func (r *Router) selectThinkingBudget(analysis *TaskComplexity) int32 {
 	var budget int32
 	switch analysis.Strategy {
 	case StrategyDirect:
-		// Pure conversational answer, no tools — thinking off.
+		// The cheap path: a short question answered on the fast model. Tools
+		// are present (core + memory), so this zero is about cost, not about
+		// capability — the earlier "no tools" reading of it is what let a terse
+		// "fix the failing test" land here with reasoning off.
 		budget = 0
 	case StrategySingleTool:
 		if analysis.Score <= 2 {

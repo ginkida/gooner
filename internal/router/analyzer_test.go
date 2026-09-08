@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"gokin/internal/config"
+	"gokin/internal/tools"
 )
 
 // A terse imperative is not a question, however few words it is. The score<=2
@@ -56,5 +57,34 @@ func TestSelectThinkingBudget_TerseImperativeKeepsReasoning(t *testing.T) {
 	if b := auto.selectThinkingBudget(analysis); b == 0 {
 		t.Fatalf("a repair request runs with reasoning off (strategy=%s score=%d)",
 			analysis.Strategy, analysis.Score)
+	}
+}
+
+// StrategyDirect described itself as "Direct AI response without tools", and a
+// RequiresTools predicate said the same in code. Neither was true of any
+// released build: executeDirect runs the same executor as every other
+// strategy, with core tools and memory. Nothing read the predicate, so the
+// falsehood cost nothing directly — it cost by supplying the premise for the
+// zero thinking budget, which is how a four-word repair request came to run
+// with reasoning off. The corrected comments now claim this, so it is pinned
+// rather than asserted.
+func TestSelectToolSets_DirectStrategyStillCarriesCoreTools(t *testing.T) {
+	r := &Router{}
+	sets := r.selectToolSets(&TaskComplexity{Strategy: StrategyDirect, Score: 1})
+
+	has := func(want tools.ToolSet) bool {
+		for _, s := range sets {
+			if s == want {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(tools.ToolSetCore) {
+		t.Fatalf("Direct is documented as carrying core tools (read/write/edit/bash); got %v", sets)
+	}
+	if !has(tools.ToolSetMemory) {
+		t.Fatalf("Direct is documented as carrying memory, which is why the memory-pattern "+
+			"check is justified by cost rather than by capability; got %v", sets)
 	}
 }

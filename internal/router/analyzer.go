@@ -40,7 +40,7 @@ type TaskComplexity struct {
 type ExecutionStrategy string
 
 const (
-	StrategyDirect     ExecutionStrategy = "direct"      // Direct AI response
+	StrategyDirect     ExecutionStrategy = "direct"      // Executor with core+memory tools, fast model, no reasoning
 	StrategySingleTool ExecutionStrategy = "single_tool" // One tool call
 	StrategyExecutor   ExecutionStrategy = "executor"    // Standard function calling loop
 	StrategySubAgent   ExecutionStrategy = "sub_agent"   // Spawn a sub-agent
@@ -199,9 +199,11 @@ func (ta *TaskAnalyzer) determineTaskType(message string, score int) TaskType {
 	}
 
 	// Memory operations — checked BEFORE question/score so a terse
-	// "запомни X" doesn't fall into StrategyDirect (which excludes
-	// tools). Routes to TaskTypeSingleTool → StrategyExecutor →
-	// memory tool executes.
+	// "запомни X" doesn't fall into StrategyDirect. Not because Direct lacks
+	// the memory tool (it has it), but because Direct is the cheap path: fast
+	// model, reasoning off, "pure Q&A" framing — under which the model answered
+	// conversationally instead of calling the tool. Routes to
+	// TaskTypeSingleTool → StrategyExecutor → memory tool executes.
 	if ta.matchesAny(lowerMessage, ta.memoryPatterns) {
 		return TaskTypeSingleTool
 	}
@@ -235,7 +237,7 @@ func (ta *TaskAnalyzer) determineStrategy(taskType TaskType, score int) Executio
 	switch taskType {
 	case TaskTypeQuestion:
 		if score <= 2 {
-			return StrategyDirect // Simple questions - direct response
+			return StrategyDirect // Simple questions — cheapest path: fast model, reasoning off
 		}
 		return StrategyExecutor // May need tools
 
@@ -380,9 +382,10 @@ var questionRegexPatterns = []string{
 
 // memoryRegexPatterns detect short-form memory operations ("remember X",
 // "запомни Y", "recall Z", "forget that") so they don't fall into
-// StrategyDirect (which ships no tools — historically these requests
-// produced a plain-text "OK, I'll remember" response without the memory
-// tool ever being called, silently losing the content).
+// StrategyDirect, where these requests historically produced a plain-text
+// "OK, I'll remember" response without the memory tool ever being called,
+// silently losing the content. The tool is present on that path; what is
+// absent is the reasoning budget and the model that would use it.
 //
 // Russian stems drop `\b` because Go's RE2 treats Cyrillic characters
 // as non-\w, so `\bзапомн` never matches. The stem itself is distinctive

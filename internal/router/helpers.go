@@ -18,7 +18,7 @@ func (t TaskType) String() string {
 func (s ExecutionStrategy) GetDescription() string {
 	switch s {
 	case StrategyDirect:
-		return "Direct AI response"
+		return "Direct response (core tools, fast model)"
 	case StrategySingleTool:
 		return "Single tool call"
 	case StrategyExecutor:
@@ -90,16 +90,12 @@ func (s ExecutionStrategy) IsValid() bool {
 	}
 }
 
-// RequiresTools checks if the strategy requires tool usage
-func (s ExecutionStrategy) RequiresTools() bool {
-	switch s {
-	case StrategyDirect:
-		return false
-	default:
-		return true
-	}
-}
-
+// RequiresTools was removed: it answered false for StrategyDirect, and that
+// was not true of any released build — executeDirect runs the same executor as
+// every other strategy, with ToolSetCore (read/write/edit/bash/glob/grep) plus
+// memory. Nothing read the predicate, so the falsehood cost nothing directly;
+// it cost plenty indirectly, by supplying the premise for decisions made
+// elsewhere. A wrong statement no one reads is worse than an absent one.
 // RequiresMultipleAgents checks if the strategy requires multiple agents
 func (s ExecutionStrategy) RequiresMultipleAgents() bool {
 	return false // No coordinator support

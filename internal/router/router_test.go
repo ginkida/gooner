@@ -276,19 +276,12 @@ func TestExecutionStrategyHelpers(t *testing.T) {
 		t.Error("invalid strategy should not be valid")
 	}
 
-	// RequiresTools
-	if StrategyDirect.RequiresTools() {
-		t.Error("StrategyDirect should not require tools")
-	}
-	if !StrategyExecutor.RequiresTools() {
-		t.Error("StrategyExecutor should require tools")
-	}
-	if !StrategySingleTool.RequiresTools() {
-		t.Error("StrategySingleTool should require tools")
-	}
+	// RequiresTools is gone, and this is where its claim was pinned: the
+	// assertion read "StrategyDirect should not require tools", which was never
+	// true of a released build. Coverage of a falsehood is how it survives.
 
 	// GetDescription
-	if desc := StrategyDirect.GetDescription(); desc != "Direct AI response" {
+	if desc := StrategyDirect.GetDescription(); desc != "Direct response (core tools, fast model)" {
 		t.Errorf("StrategyDirect.GetDescription() = %q", desc)
 	}
 }
