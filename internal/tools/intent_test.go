@@ -61,3 +61,51 @@ func TestIsImplementationTool(t *testing.T) {
 		}
 	}
 }
+
+// "Look at X and fix it" is a work request with a preamble, not a request for
+// analysis. It used to read as analysis because the look-first frame was
+// checked before the imperative and won outright — so the agent explored, then
+// hit a confirmation prompt on its own first edit, in a turn the user had
+// already told it to act in. Both languages, because the phrasing is ordinary
+// in both.
+func TestClassifyTurnDiscuss_LookFirstPreambleLosesToAnExplicitImperative(t *testing.T) {
+	for _, msg := range []string{
+		"посмотри и исправь падающий тест",
+		"глянь и почини сборку",
+		"take a look and fix the failing test",
+		"look at the parser and rename this symbol",
+	} {
+		if ClassifyTurnDiscuss(msg, "") {
+			t.Errorf("%q is a work request; gating its first edit interrupts work the user asked for", msg)
+		}
+	}
+}
+
+// The frame still settles the turn when nothing says to act, which is the
+// reason it exists — otherwise the fix would have traded one wrong answer for
+// the opposite one.
+func TestClassifyTurnDiscuss_LookFirstFrameAloneIsStillAnalysis(t *testing.T) {
+	for _, msg := range []string{
+		"посмотри на этот код",
+		"take a look at the parser",
+		"глянь что тут происходит",
+	} {
+		if !ClassifyTurnDiscuss(msg, "") {
+			t.Errorf("%q asks for a look and nothing more; it must stay analysis", msg)
+		}
+	}
+}
+
+// Frames that ask for an opinion are unchanged: they win even next to an
+// imperative, because the deliberation is the thing being asked for.
+func TestClassifyTurnDiscuss_OpinionFramesStillWinOverImperatives(t *testing.T) {
+	for _, msg := range []string{
+		"как думаешь, стоит ли переписать это? если да — перепиши",
+		"what do you think, should we rename this? if so, rename it",
+		"за и против того, чтобы удалить этот слой",
+	} {
+		if !ClassifyTurnDiscuss(msg, "") {
+			t.Errorf("%q asks for deliberation; acting on it skips the answer the user wanted", msg)
+		}
+	}
+}

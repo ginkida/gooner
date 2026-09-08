@@ -45,7 +45,7 @@ var discussFrames = []string{
 	"how to", "what's the best", "what is the best", "best way", "best approach",
 	"let's discuss", "lets discuss", "can we discuss", "should we", "should i",
 	"what are the options", "what options", "pros and cons", "trade-off", "tradeoff",
-	"explain", "walk me through", "take a look", "review the", "compare",
+	"explain", "walk me through", "review the", "compare",
 	"evaluate", "assess", "is it possible", "is it worth", "what if", "why ",
 	"what is", "what are", "what's", "any ideas", "any thoughts", "thoughts?",
 	// Russian
@@ -53,8 +53,16 @@ var discussFrames = []string{
 	"что думаешь", "как бы", "как лучше", "лучший способ", "лучший подход",
 	"давай обсуд", "обсуд", "стоит ли", "какие вариант", "за и против",
 	"объясни", "почему", "что такое", "как устроен", "как работает",
-	"можно ли", "посмотри", "оцени", "сравни", "разбер", "рассмотр",
+	"можно ли", "оцени", "сравни", "разбер", "рассмотр",
 	"что лучше", "имеет ли смысл", "как бы ты",
+}
+
+// softDiscussFrames ask the agent to look before acting. Alone they mean
+// analysis, but paired with an explicit imperative they are a preamble to the
+// work, not a request for deliberation — so they are checked AFTER
+// actionImperatives and lose to them.
+var softDiscussFrames = []string{
+	"take a look", "look at", "посмотри", "глянь",
 }
 
 // actionImperatives are clear "do it now" commands. When present (and no discuss
@@ -103,11 +111,19 @@ func ClassifyTurnDiscuss(message, conversationMode string) bool {
 	if lower == "" {
 		return false
 	}
+	// Frames that ask for an OPINION settle the turn on their own. Frames that
+	// only ask the agent to LOOK FIRST do not: "посмотри и исправь падающий
+	// тест" and "take a look and fix the failing test" are unambiguous work
+	// requests with a preamble, and they used to be read as analysis — so the
+	// agent explored, then hit a confirmation prompt on its own first edit.
 	if containsAny(lower, discussFrames) {
 		return true
 	}
 	if containsAny(lower, actionImperatives) {
 		return false
+	}
+	if containsAny(lower, softDiscussFrames) {
+		return true
 	}
 	return conversationMode == "exploring"
 }
