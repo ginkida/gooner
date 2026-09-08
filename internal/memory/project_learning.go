@@ -300,11 +300,16 @@ func (pl *ProjectLearning) LearnCommand(cmd, desc string, success bool, duration
 }
 
 // LearnPattern records a code pattern.
-func (pl *ProjectLearning) LearnPattern(name, description string, examples []string, tags []string) {
+// LearnPattern records a pattern and reports whether it survived. At the limit
+// the store re-sorts by name and keeps the first N, so a newly added pattern
+// can be the one dropped — while dirty is already set, which made the write
+// look successful downstream. Same failure as SetPreference, through a
+// different door.
+func (pl *ProjectLearning) LearnPattern(name, description string, examples []string, tags []string) bool {
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
 	if name == "" {
-		return
+		return false
 	}
 
 	// Find or create pattern
@@ -352,6 +357,16 @@ func (pl *ProjectLearning) LearnPattern(name, description string, examples []str
 
 	pl.dirty = true
 	pl.saveFunc()
+	return patternPresent(pl.data.Patterns, name)
+}
+
+func patternPresent(patterns []LearnedPattern, name string) bool {
+	for i := range patterns {
+		if patterns[i].Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // LearnFileType records conventions for a file type.
@@ -400,20 +415,28 @@ func (pl *ProjectLearning) LearnFileType(ext string, conventions []string) {
 }
 
 // SetPreference sets a project preference.
-func (pl *ProjectLearning) SetPreference(key, value string) {
+// SetPreference stores an entry and reports whether it survived. A refusal at
+// the limit used to be a Warn and a bare return, which the caller could not
+// see: memorize then reported "Memorized fact: X (already current — nothing to
+// write)", asserting both that the fact was stored and that it had been there
+// all along. The model reads that as success, so the fact is lost and every
+// later one is lost the same way — a memory that is permanently write-only and
+// says nothing about it.
+func (pl *ProjectLearning) SetPreference(key, value string) bool {
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
 	if key == "" {
-		return
+		return false
 	}
 	if _, exists := pl.data.Preferences[key]; !exists && len(pl.data.Preferences) >= maxProjectLearningPreferences {
 		logging.Warn("project learning preference limit reached", "limit", maxProjectLearningPreferences)
-		return
+		return false
 	}
 
 	pl.data.Preferences[key] = value
 	pl.dirty = true
 	pl.saveFunc()
+	return true
 }
 
 // RemoveEntry deletes a memorized entry by key — a bare preference, an entry

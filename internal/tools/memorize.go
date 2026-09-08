@@ -75,14 +75,15 @@ func (t *MemorizeTool) Execute(ctx context.Context, args map[string]any) (ToolRe
 	content, _ := GetString(args, "content")
 
 	forgot := false
+	stored := true
 	switch infoType {
 	case "preference":
-		t.learning.SetPreference(key, content)
+		stored = t.learning.SetPreference(key, content)
 	case "fact", "convention":
 		// Store as a preference for now or extend ProjectLearning
-		t.learning.SetPreference(fmt.Sprintf("%s:%s", infoType, key), content)
+		stored = t.learning.SetPreference(fmt.Sprintf("%s:%s", infoType, key), content)
 	case "pattern":
-		t.learning.LearnPattern(key, content, nil, nil)
+		stored = t.learning.LearnPattern(key, content, nil, nil)
 	case "forget":
 		// The correction half of memory maintenance: remove an entry that
 		// turned out wrong or stale so it stops polluting future sessions.
@@ -92,6 +93,17 @@ func (t *MemorizeTool) Execute(ctx context.Context, args map[string]any) (ToolRe
 		forgot = true
 	default:
 		return NewErrorResult(fmt.Sprintf("unknown information type: %s", infoType)), nil
+	}
+
+	// A full store drops the write, and the flush below would then report
+	// "nothing to write" — which reads as "already saved" and loses the fact
+	// silently, forever, for every later call too. Say so instead, and name
+	// the action that frees room; the model can run it itself.
+	if !stored {
+		return NewErrorResult(fmt.Sprintf(
+			"memory is full — %q was NOT saved. Remove entries that are no longer true "+
+				"(`memorize` with type=forget and the key) and try again; `memory` action=list "+
+				"shows what is stored.", key)), nil
 	}
 
 	// Flush immediately to ensure persistence. FlushChanged reports whether a
