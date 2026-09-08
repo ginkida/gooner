@@ -570,7 +570,7 @@ func newBackgroundLogsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			job, err := store.Resolve(args[0])
+			job, err := resolveBackgroundJob(store, args[0])
 			if err != nil {
 				return err
 			}
@@ -601,7 +601,7 @@ func newBackgroundStopCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			job, err := store.Resolve(args[0])
+			job, err := resolveBackgroundJob(store, args[0])
 			if err != nil {
 				return err
 			}
@@ -665,7 +665,7 @@ func newBackgroundRespawnCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			source, err := store.Resolve(args[0])
+			source, err := resolveBackgroundJob(store, args[0])
 			if err != nil {
 				return err
 			}
@@ -902,7 +902,7 @@ func newBackgroundAttachCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			job, err := store.Resolve(args[0])
+			job, err := resolveBackgroundJob(store, args[0])
 			if err != nil {
 				return err
 			}
@@ -961,7 +961,7 @@ func enqueueLiveBackgroundControl(
 	if store == nil {
 		return backgroundstore.Job{}, backgroundstore.Control{}, fmt.Errorf("background store is not initialized")
 	}
-	job, err := store.Resolve(query)
+	job, err := resolveBackgroundJob(store, query)
 	if err != nil {
 		return backgroundstore.Job{}, backgroundstore.Control{}, err
 	}
@@ -1084,4 +1084,17 @@ func copyLogGrowth(w io.Writer, path string, offset int64) (int64, error) {
 	}
 	written, err := io.Copy(w, bufio.NewReader(file))
 	return offset + written, err
+}
+
+// resolveBackgroundJob resolves an ID or prefix and, when it cannot, points at
+// the command that lists the valid ones. This error is reached at exactly the
+// moment the user does not know what to type — a stale ID, a typo, a session
+// that has aged out — and the store cannot say so itself: it does not know it
+// is being driven from a CLI.
+func resolveBackgroundJob(store *backgroundstore.Store, query string) (backgroundstore.Job, error) {
+	job, err := store.Resolve(query)
+	if err != nil {
+		return backgroundstore.Job{}, fmt.Errorf("%w (run `gokin agents` to list background sessions)", err)
+	}
+	return job, nil
 }
