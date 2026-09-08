@@ -53,7 +53,7 @@ func TestStagnationFingerprint_InspectionToolsKeyOnTarget(t *testing.T) {
 func TestStagnationRecovery_ReadOnlyInspectionToolsAreHintEligible(t *testing.T) {
 	for _, tool := range []string{
 		"git_status", "git_diff", "git_log", "git_blame", "diff",
-		"review_changes", "check_impact", "go_search", "go_diagnostics",
+		"review_changes", "check_impact", "go_search",
 		"go_to_definition", "find_references", "history_search",
 	} {
 		if got := maxStagnationRecoveryAttempts(tool); got != 2 {

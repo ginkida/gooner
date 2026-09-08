@@ -33,6 +33,7 @@ func TestPolicyToolSetsNameOnlyRegisteredTools(t *testing.T) {
 		"parallelSafeTools":       parallelSafeTools,
 		"sequentialReadOnlyTools": sequentialReadOnlyTools,
 		"planModeReadOnlyTools":   planModeReadOnlyTools,
+		"idempotentStateTools":    idempotentStateTools,
 	}
 
 	var phantom []string

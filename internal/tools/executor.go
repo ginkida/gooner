@@ -4394,14 +4394,22 @@ func isStagnationRecoverySafe(name string) bool {
 	if IsParallelSafeTool(name) {
 		return true
 	}
-	switch name {
-	case "memory", "memorize", "skill", "todo",
-		"check_impact", "go_diagnostics", "mcp_admin":
-		// Idempotent state/query tools not in parallelSafeTools (they write
-		// idempotently or spawn a read helper), safe to re-hint.
-		return true
-	}
-	return false
+	return idempotentStateTools[name]
+}
+
+// idempotentStateTools are the tools outside parallelSafeTools whose repeat is
+// still a no-op — they write idempotently or spawn a read helper. Kept as a set
+// rather than a switch so the phantom-name guard can see it: this list carried
+// "go_diagnostics" for three releases, which is a code-intelligence RPC method
+// the provider calls, never a registered tool, so the entry matched nothing and
+// the list read as covering one case more than it did.
+var idempotentStateTools = map[string]bool{
+	"memory":       true,
+	"memorize":     true,
+	"skill":        true,
+	"todo":         true,
+	"check_impact": true,
+	"mcp_admin":    true,
 }
 
 func maxStagnationRecoveryAttempts(toolName string) int {

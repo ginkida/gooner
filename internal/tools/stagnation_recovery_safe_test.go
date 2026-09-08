@@ -26,7 +26,7 @@ func TestStagnationRecovery_IdempotentToolsAreRecoverySafe(t *testing.T) {
 		// Side-effect-free (IsParallelSafeTool) — sampled.
 		"read", "grep", "git_status", "go_search", "review_changes", "web_fetch",
 		// Idempotent inspection not in parallelSafeTools.
-		"check_impact", "go_diagnostics",
+		"check_impact",
 	}
 	for _, tool := range recoverable {
 		if !isStagnationRecoverySafe(tool) {

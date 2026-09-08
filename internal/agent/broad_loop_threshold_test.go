@@ -37,7 +37,7 @@ func TestBroadLoopThreshold_ExplorationToolsGetHigherCeiling(t *testing.T) {
 	// the v0.100.95 semantic/review inspection tools (Kimi-friendliness).
 	for _, tool := range []string{
 		"diff", "git_status", "git_diff", "git_log", "git_blame", "check_impact", "history_search",
-		"go_search", "go_diagnostics", "go_to_definition", "find_references", "review_changes",
+		"go_search", "go_to_definition", "find_references", "review_changes",
 	} {
 		if got := a.broadLoopThreshold(tool); got != a.loopThreshold*4 {
 			t.Errorf("%s: review-flagged explorer must get 4× ceiling, got %d", tool, got)

@@ -1739,7 +1739,7 @@ var broadLoopExplorationTools = toolNameSet(
 	// no external cost, and called many times over distinct symbols/files in
 	// one understand/refactor task. Missing here, a reasoning-heavy Kimi K3
 	// sub-agent navigating a codebase hit the low base ceiling (v0.100.95).
-	"go_search", "go_diagnostics", "go_to_definition", "find_references",
+	"go_search", "go_to_definition", "find_references",
 	"review_changes",
 )
 
