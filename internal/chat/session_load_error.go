@@ -72,3 +72,12 @@ var (
 	errSessionIdentityMismatch = errors.New("session identity mismatch")
 	errSessionFileTooLarge     = errors.New("session file is too large")
 )
+
+// ErrSessionStateTooLarge marks the one save failure the user can actually
+// resolve. Disk and permission failures are external and usually transient;
+// this one is self-inflicted, permanent until the history shrinks, and
+// invisible — compaction is driven by the context limit, so on a
+// million-token model a session can sit unsaveable for hours while every
+// autosave silently fails. Exported so the UI can name the cause and point at
+// the action that fixes it instead of guessing at disk space.
+var ErrSessionStateTooLarge = errors.New("session state is too large to persist")

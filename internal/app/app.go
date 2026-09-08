@@ -886,7 +886,7 @@ func (a *App) RunWithInitialPrompt(initialPrompt string) error {
 		a.sessionManager.SetOnSaveFailed(func(saveErr error) {
 			a.safeSendToProgram(ui.StatusUpdateMsg{
 				Type:    ui.StatusWarning,
-				Message: "Session autosave is failing — history may not persist (check disk space / permissions)",
+				Message: sessionSaveFailureMessage(saveErr),
 			})
 			logging.Warn("session autosave failing (surfaced to UI)", "error", saveErr)
 		})

@@ -272,7 +272,7 @@ func (m *HistoryManager) SaveFull(session *Session) error {
 		return err
 	}
 	if int64(len(data)) > maxSessionFileBytes {
-		return fmt.Errorf("session state is too large: %d bytes (maximum %d)", len(data), maxSessionFileBytes)
+		return fmt.Errorf("%w: %d bytes (maximum %d)", ErrSessionStateTooLarge, len(data), maxSessionFileBytes)
 	}
 	if err := validateBoundedJSON(data); err != nil {
 		return fmt.Errorf("session state cannot be safely persisted: %w", err)

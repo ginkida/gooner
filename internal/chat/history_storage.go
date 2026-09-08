@@ -296,7 +296,7 @@ var persistedTimeType = reflect.TypeOf(time.Time{})
 
 func (w *jsonPayloadWalk) consume(bytes int64) error {
 	if bytes < 0 || bytes > w.remaining {
-		return fmt.Errorf("session JSON payload is too large (maximum %d bytes)", w.limit)
+		return fmt.Errorf("%w: JSON payload over %d bytes", ErrSessionStateTooLarge, w.limit)
 	}
 	w.remaining -= bytes
 	return nil
