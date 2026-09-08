@@ -88,3 +88,37 @@ func TestSelectToolSets_DirectStrategyStillCarriesCoreTools(t *testing.T) {
 			"check is justified by cost rather than by capability; got %v", sets)
 	}
 }
+
+// Every English pattern in the analyzer has a Russian counterpart, and four of
+// those counterparts could not match anything a person would type. Two carried
+// a trailing \b, which RE2 never satisfies after Cyrillic — a pitfall this
+// codebase already documents beside the memory patterns, recurring in a
+// sibling file. One demanded an ungrammatical noun case ("все файлов"). One
+// matched a word that does not exist: `улучшись?` requires "улучшис", so
+// "улучши код" missed while "improve the code" hit.
+//
+// The consequence is the same in every case and is not cosmetic: the request
+// fell through to the score fallback, was typed as a Question, and took the
+// cheap path — fast model, reasoning off — while its English twin got the
+// executor. The same task in two languages was treated differently.
+func TestDetermineTaskType_RussianPhrasingsRouteLikeTheirEnglishTwins(t *testing.T) {
+	ta := NewTaskAnalyzer(4, 3)
+	cases := map[string]TaskType{
+		"улучши код":            TaskTypeRefactoring,
+		"улучшить код":          TaskTypeRefactoring,
+		"улучши этот код":       TaskTypeRefactoring,
+		"исследуй кодовую базу": TaskTypeExploration,
+		"построй систему":       TaskTypeMultiTool,
+		"обнови все файлы":      TaskTypeMultiTool,
+	}
+	for msg, want := range cases {
+		analysis := ta.Analyze(msg)
+		if analysis.Type != want {
+			t.Errorf("%q typed as %s, want %s — its English twin routes to %s while this "+
+				"takes the cheap path with reasoning off", msg, analysis.Type, want, want)
+		}
+		if analysis.Strategy == StrategyDirect {
+			t.Errorf("%q routed to the no-reasoning strategy", msg)
+		}
+	}
+}

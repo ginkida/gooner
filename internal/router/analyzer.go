@@ -415,7 +415,7 @@ var memoryRegexPatterns = []string{
 
 var explorationRegexPatterns = []string{
 	`explore`,
-	`исследуй\b`,
+	`исследуй`, // no \b: RE2 treats Cyrillic as non-\w, so the boundary never matches
 	`проанализируй\s+(код|проект|файл)`,
 	`анализ\s+(кода|проекта|файла)`,
 	`найди\s+(все\s+)?(файлы|использования|где\s+используется)`,
@@ -441,7 +441,7 @@ var refactoringRegexPatterns = []string{
 	`clean\s+up`,
 	`почисти`,
 	`improve\s+(the\s+)?code`,
-	`улучшись?\s+код`,
+	`улучши(ть)?\s+(этот\s+)?код`,
 	`fix\s+(style|formatting)`,
 	`исправь\s+(стиль|форматирование)`,
 	`reorganize`,
@@ -476,9 +476,9 @@ var multiToolRegexPatterns = []string{
 	`add\s+(new\s+)?(feature|functionality)`,
 	`добавь\s+(новую\s+)?(функцию|фичу|возможность)`,
 	`build\s+(application|system|module)`,
-	`построй\b`,
+	`построй`, // no \b, same reason
 	`update\s+(multiple|several|all)\s+files`,
-	`обнови\s+(несколько|все)\s+файлов`,
+	`обнови\s+(несколько|все)\s+файл`, // stem: "все файлы" is the grammatical form, "все файлов" is not
 	`change\s+(\w+\s+)?and\s+(\w+\s+)?`,
 	`измени\s+.*\s+и\s+`,
 	`first\s+.*\s+then\s+`,
