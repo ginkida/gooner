@@ -75,16 +75,23 @@ var (
 
 const maxHeadlessStdinBytes = 16 << 20
 
-func main() {
-	rootCmd := &cobra.Command{
-		Use:   "gokin",
-		Short: "AI-powered CLI assistant for code",
-		Long: `Gokin is a CLI tool for AI-assisted coding. Supports Kimi
-(default), GLM, MiniMax, DeepSeek, and Ollama. It provides an
+// rootLongHelp is the first thing a new user reads, and it names the default
+// provider — which is to say it tells them which API key to go and obtain. It
+// is a const rather than an inline literal so a test can hold it against
+// config.DefaultConfig: the claim went stale once already, still naming Kimi
+// after the default moved to GLM.
+const rootLongHelp = `Gokin is a CLI tool for AI-assisted coding. Supports GLM
+(default), Kimi, DeepSeek, MiniMax, and Ollama. It provides an
 interactive chat interface with tools for reading, writing, and
 editing files, running commands, and orchestrating multi-agent
 workflows — with zero proxies between you and the provider you
-choose.`,
+choose.`
+
+func main() {
+	rootCmd := &cobra.Command{
+		Use:          "gokin",
+		Short:        "AI-powered CLI assistant for code",
+		Long:         rootLongHelp,
 		Args:         cobra.ArbitraryArgs,
 		RunE:         runApp,
 		SilenceUsage: true,
