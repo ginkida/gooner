@@ -3,10 +3,13 @@ package commands
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"gokin/internal/config"
 	appcontext "gokin/internal/context"
 	"gokin/internal/format"
 	"gokin/internal/mcp"
@@ -145,6 +148,12 @@ func (c *StatsCommand) Execute(ctx context.Context, args []string, app AppInterf
 		sb.WriteString(usage)
 	}
 
+	// The audit log runs on every tool call and has no reader inside the app,
+	// so the only way it is useful is if the user can find the files.
+	if audit := formatAuditLogLocation(cfg); audit != "" {
+		sb.WriteString(audit)
+	}
+
 	// MCP section — only shown when at least one server is configured so we
 	// don't clutter /stats for users who never opted in.
 	if mgr := app.GetMCPManager(); mgr != nil {
@@ -276,3 +285,41 @@ const (
 	lifetimeUsageTopN     = 5
 	lifetimeUnusedListMax = 8
 )
+
+// formatAuditLogLocation names a subsystem that runs on every tool call and
+// cannot be reached from inside the app: the audit log has no viewer here — no
+// command lists it, and its query API (GetRecent/GetSessions/Export) has never
+// had a production caller. The files ARE the interface, and that only works if
+// the user knows they exist. Reports what is on disk and stops there, the same
+// way the tool-usage section does.
+func formatAuditLogLocation(cfg *config.Config) string {
+	if cfg == nil || !cfg.Audit.Enabled {
+		return ""
+	}
+	configDir, err := appcontext.GetConfigDir()
+	if err != nil {
+		return ""
+	}
+	auditDir := filepath.Join(configDir, "audit")
+	entries, err := os.ReadDir(auditDir)
+	if err != nil {
+		// Nothing has been written yet, which is not worth a line.
+		return ""
+	}
+	sessions := 0
+	for _, e := range entries {
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".json" {
+			sessions++
+		}
+	}
+	if sessions == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Audit Log (tool calls, all sessions)\n")
+	fmt.Fprintf(&sb, "  Location:        %s\n", auditDir)
+	fmt.Fprintf(&sb, "  Session files:   %d (kept %d days)\n", sessions, cfg.Audit.RetentionDays)
+	sb.WriteString("  Not readable from inside gokin — the files are JSON.\n\n")
+	return sb.String()
+}
