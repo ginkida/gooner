@@ -81,6 +81,14 @@ var actionImperatives = []string{
 	"измени", "перепиши", "внеси", "сделаем это", "го ", "погнали",
 }
 
+// IsActionImperative reports whether the message is a clear "do it now"
+// command. Exported for the router, which otherwise types a terse imperative
+// as a Question purely because it is short — and a Question routes to the
+// strategy that turns reasoning off.
+func IsActionImperative(message string) bool {
+	return containsAny(strings.ToLower(strings.TrimSpace(message)), actionImperatives)
+}
+
 func containsAny(s string, subs []string) bool {
 	for _, sub := range subs {
 		if strings.Contains(s, sub) {

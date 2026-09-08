@@ -9,6 +9,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"gokin/internal/tools"
+
 	"gokin/internal/client"
 	"gokin/internal/logging"
 )
@@ -201,6 +203,17 @@ func (ta *TaskAnalyzer) determineTaskType(message string, score int) TaskType {
 	// tools). Routes to TaskTypeSingleTool → StrategyExecutor →
 	// memory tool executes.
 	if ta.matchesAny(lowerMessage, ta.memoryPatterns) {
+		return TaskTypeSingleTool
+	}
+
+	// A terse imperative is not a question, however few words it is. The
+	// score<=2 fallback below calls anything short a Question, and a Question
+	// routes to StrategyDirect — whose thinking budget is zero, on the grounds
+	// that it is "a pure conversational answer". "fix the failing test" is
+	// four words and none of that is true of it. The memory-pattern check
+	// above is this same fix made for one case; this is the general form, and
+	// it reuses the curated imperative list rather than growing a second one.
+	if IsActionImperativeMessage(message) {
 		return TaskTypeSingleTool
 	}
 
@@ -979,4 +992,11 @@ type LLMSubtask struct {
 	AgentType    string   `json:"agent_type"`
 	Priority     int      `json:"priority"`
 	Dependencies []string `json:"dependencies"`
+}
+
+// IsActionImperativeMessage is a thin seam over the tools package's curated
+// imperative vocabulary, kept here so the analyzer's one dependency on it is
+// named and testable.
+func IsActionImperativeMessage(message string) bool {
+	return tools.IsActionImperative(message)
 }
